@@ -29,7 +29,7 @@ class ProjectBundle:
 
 
 def export_project_zip(
-    target_path: str | Path,
+    target_path: Optional[str | Path] = None,
     *,
     project_name: str = "karaoke_project",
     doc: Optional[AssDocument] = None,
@@ -39,10 +39,16 @@ def export_project_zip(
     audio_path: Optional[str | Path] = None,
     audio_bytes: Optional[bytes] = None,
     audio_filename: Optional[str] = None,
-) -> Path:
-    """Package current project state into a portable .kproj / .zip archive."""
-    target = Path(target_path)
-    target.parent.mkdir(parents=True, exist_ok=True)
+) -> Path | bytes:
+    """Package current project state into a portable .kproj / .zip archive or return bytes."""
+    buf: Optional[io.BytesIO] = None
+    if target_path is not None:
+        target = Path(target_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        sink = target
+    else:
+        buf = io.BytesIO()
+        sink = buf
 
     burst_cfg = burst_settings or {
         "mode": "dynamic",
@@ -67,7 +73,7 @@ def export_project_zip(
         "burst_settings": burst_cfg,
     }
 
-    with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+    with zipfile.ZipFile(sink, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         # 1. Project config
         zf.writestr("project.json", json.dumps(meta, ensure_ascii=False, indent=2))
 
@@ -100,6 +106,8 @@ def export_project_zip(
             with open(audio_path, "rb") as af:
                 zf.writestr(audio_name or "audio.wav", af.read())
 
+    if buf is not None:
+        return buf.getvalue()
     return target
 
 

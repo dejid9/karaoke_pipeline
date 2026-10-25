@@ -30,14 +30,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install "flet[all]>=1.0.5"
 
-      - name: Accept Android SDK licenses
-        run: |
-          yes | sdkmanager --licenses || true
-
       - name: Build Android APK
         working-directory: karaoke_mobile
         run: |
-          flet build apk src -o build/apk --project KaraokeMobile --yes --no-rich-output
+          flet build apk src -o build/apk --project KaraokeMobile --arch arm64-v8a --yes --no-rich-output
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4

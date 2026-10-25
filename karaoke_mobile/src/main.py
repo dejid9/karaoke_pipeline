@@ -1,4 +1,4 @@
-"""Karaoke Mobile — Main Application Entrypoint with Exact SPS and Project Management."""
+"""Karaoke Mobile — Main Application Entrypoint with Exact SPS, Project Management, and PC Themes."""
 
 from __future__ import annotations
 
@@ -12,11 +12,15 @@ from core.project_bundle import ProjectBundle
 from core.sps import MeasurementTimeline
 from ui.theme import (
     COLOR_PRIMARY,
+    DEFAULT_THEME,
     SURFACE_DARK,
     SURFACE_ELEVATED,
     TEXT_MUTED,
     TEXT_PRIMARY,
+    ThemePalette,
     apply_mobile_theme,
+    get_current_palette,
+    theme_names,
 )
 from ui.views.burst_view import BurstView
 from ui.views.editor_view import EditorView
@@ -27,7 +31,7 @@ from ui.views.sps_view import SPSView
 
 def main(page: ft.Page):
     """Flet application entrypoint."""
-    apply_mobile_theme(page)
+    pal = apply_mobile_theme(page, DEFAULT_THEME)
 
     # Shared State
     current_document: AssDocument | None = None
@@ -79,6 +83,15 @@ def main(page: ft.Page):
 
     def on_burst_settings_changed(settings):
         pass
+
+    def jump_to_sps(syllable_id: str):
+        """Navigate directly from Editor to Exact SPS view focusing on syllable."""
+        if current_document:
+            sps_view.set_document(current_document, current_timeline)
+            sps_view.focus_syllable(syllable_id)
+        nav_bar.selected_index = 2
+        page_container.content = views[2]
+        page.update()
 
     def on_project_loaded(bundle: ProjectBundle):
         nonlocal current_transcript, current_audio_name, current_burst_settings
@@ -132,7 +145,10 @@ def main(page: ft.Page):
 
     # Initialize Views
     mfa_view = MFAView(on_alignment_success=on_alignment_success)
-    editor_view = EditorView(on_document_changed=on_document_changed)
+    editor_view = EditorView(
+        on_document_changed=on_document_changed,
+        on_jump_to_sps=jump_to_sps,
+    )
     sps_view = SPSView(
         on_document_changed=on_document_changed,
         on_measurements_changed=on_measurements_changed,
@@ -171,11 +187,58 @@ def main(page: ft.Page):
         page_container.content = views[idx]
         page.update()
 
+    def change_theme(theme_name: str):
+        new_pal = apply_mobile_theme(page, theme_name)
+        top_bar.bgcolor = new_pal.panel
+        top_bar.border = ft.Border(bottom=ft.BorderSide(1, new_pal.border))
+        app_title.color = new_pal.fg
+        app_icon.color = new_pal.accent
+        nav_bar.bgcolor = new_pal.panel
+        nav_bar.indicator_color = new_pal.raised
+        for v in views:
+            if hasattr(v, "apply_theme"):
+                v.apply_theme(new_pal)
+        if page:
+            page.snack_bar = ft.SnackBar(ft.Text(f"Тема оформления: {theme_name}"))
+            page.snack_bar.open = True
+            page.update()
+
+    # Theme selector menu items matching all 14 PC themes
+    theme_menu_items = [
+        ft.PopupMenuItem(
+            content=t_name,
+            on_click=lambda e, name=t_name: change_theme(name),
+        )
+        for t_name in theme_names()
+    ]
+
+    theme_btn = ft.PopupMenuButton(
+        icon=ft.Icons.COLOR_LENS_OUTLINED,
+        tooltip="Выбор темы (14 вариантов оформления)",
+        items=theme_menu_items,
+    )
+
+    app_icon = ft.Icon(ft.Icons.MIC, color=pal.accent, size=20)
+    app_title = ft.Text("Karaoke Mobile", size=17, weight=ft.FontWeight.BOLD, color=pal.fg)
+
+    top_bar = ft.Container(
+        content=ft.Row(
+            [
+                ft.Row([app_icon, app_title], spacing=8),
+                theme_btn,
+            ],
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+        ),
+        bgcolor=pal.panel,
+        padding=ft.Padding(14, 6, 14, 6),
+        border=ft.Border(bottom=ft.BorderSide(1, pal.border)),
+    )
+
     # Mobile bottom navigation bar (5 destinations)
     nav_bar = ft.NavigationBar(
         selected_index=0,
-        bgcolor=SURFACE_DARK,
-        indicator_color=SURFACE_ELEVATED,
+        bgcolor=pal.panel,
+        indicator_color=pal.raised,
         on_change=on_nav_change,
         destinations=[
             ft.NavigationBarDestination(
@@ -209,6 +272,7 @@ def main(page: ft.Page):
     page.add(
         ft.Column(
             [
+                top_bar,
                 page_container,
                 nav_bar,
             ],

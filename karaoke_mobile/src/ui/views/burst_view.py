@@ -40,6 +40,14 @@ class BurstView(ft.Container):
         self._build_controls()
         self._start_preview_animation()
 
+    def apply_theme(self, pal: ThemePalette):
+        """Update colors dynamically when theme changes."""
+        self._build_controls()
+        try:
+            self.update()
+        except RuntimeError:
+            pass
+
     def _build_controls(self):
         # 1. Mode Selector
         self.mode_radio = ft.RadioGroup(

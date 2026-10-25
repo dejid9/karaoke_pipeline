@@ -630,6 +630,24 @@ def redistribute_boundary(
     return KaraokeEditResult("boundary", (left.id, right.id), boundary)
 
 
+def nudge_syllable_duration(
+    document: AssDocument,
+    syllable_id: str,
+    delta_cs: int,
+) -> KaraokeEditResult:
+    """Adjust a single syllable's duration by delta centiseconds (1 cs = 10ms)."""
+    item = _selected(document, [syllable_id])[0]
+    new_cs = max(1, item.duration_cs + int(delta_cs))
+    event = _event_for_line(document, item.event_line_index)
+    replacement = _karaoke_replacement(item, duration_cs=new_cs)
+    event.text = _apply_replacements(
+        event.text,
+        [(item.tag_value_start, item.tag_value_end, replacement)],
+    )
+    event.commit()
+    return KaraokeEditResult("nudge-duration", (item.id,), (item.start + item.end) / 2)
+
+
 def _split_duration_at_time(item: KaraokeSyllable, boundary_time: float) -> tuple[int, int, float]:
     if item.duration_cs < 2:
         raise KaraokeEditError("The syllable is shorter than 2 centiseconds and cannot be split")

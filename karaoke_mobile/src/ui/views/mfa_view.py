@@ -45,6 +45,14 @@ class MFAView(ft.Container):
     def get_services(self) -> list[ft.Service]:
         return [self.audio_picker]
 
+    def apply_theme(self, pal: ThemePalette):
+        """Update colors dynamically when theme changes."""
+        self._build_controls()
+        try:
+            self.update()
+        except RuntimeError:
+            pass
+
     def _build_controls(self):
         # 1. Colab Server Connection Section
         self.status_icon = ft.Icon(ft.Icons.CLOUD_OFF, color=COLOR_WARNING, size=24)

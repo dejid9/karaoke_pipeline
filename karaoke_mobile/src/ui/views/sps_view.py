@@ -60,6 +60,25 @@ class SPSView(ft.Container):
 
         self._build_controls()
 
+    def focus_syllable(self, syllable_id: str):
+        """Focus and select a specific syllable ID, selecting its burst if applicable."""
+        self.selected_syllable_id = syllable_id
+        if self.bursts:
+            matching_burst = next((b for b in self.bursts if syllable_id in b.syllable_ids), None)
+            if matching_burst:
+                self.selected_burst = matching_burst
+        self._refresh_ui()
+
+    def apply_theme(self, pal: ThemePalette):
+        """Dynamic theme update."""
+        self._refresh_ui()
+
+    def _safe_update(self):
+        try:
+            self._safe_update()
+        except RuntimeError:
+            pass
+
     def get_services(self) -> list[ft.Service]:
         return [self.meas_save_picker, self.meas_open_picker]
 
@@ -297,7 +316,7 @@ class SPSView(ft.Container):
             self.burst_list_column.controls.clear()
             self.burst_list_column.controls.append(ft.Text("Субтитры не открыты", size=13, color=TEXT_MUTED))
             self.syllable_chips_row.controls.clear()
-            self.update()
+            self._safe_update()
             return
 
         total_syls = len(self.timeline.syllables)
@@ -327,7 +346,7 @@ class SPSView(ft.Container):
         # Rebuild selected syllables chips
         self._refresh_syllable_chips()
         self._refresh_measurement_editor()
-        self.update()
+        self._safe_update()
 
     def _build_burst_card(self, b: BurstCandidate) -> ft.Container:
         is_selected = self.selected_burst is not None and self.selected_burst.syllable_ids == b.syllable_ids
@@ -385,7 +404,7 @@ class SPSView(ft.Container):
                 self.selected_syllable_id = target_id
                 self._refresh_measurement_editor()
                 self._refresh_syllable_chips()
-                self.update()
+                self._safe_update()
 
             txt = s.text.strip() or "..."
             dur_ms = int(round(s.effective_duration * 1000))
