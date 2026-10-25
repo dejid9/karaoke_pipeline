@@ -31,7 +31,11 @@ class EditorView(ft.Container):
         self.on_document_changed = on_document_changed
 
         self.document: Optional[AssDocument] = None
+        self.ass_picker = ft.FilePicker(on_result=self._on_ass_picked)
         self._build_controls()
+
+    def get_services(self) -> list[ft.Service]:
+        return [self.ass_picker]
 
     def load_ass_text(self, ass_text: str):
         """Load an ASS script into the editor."""
@@ -200,24 +204,29 @@ class EditorView(ft.Container):
         )
 
     def _on_open_ass(self, e):
-        def _picked(result: ft.FilePickerResultEvent):
-            if result.files:
-                path = result.files[0].path
-                try:
-                    with open(path, "r", encoding="utf-8") as f:
-                        content = f.read()
-                    self.load_ass_text(content)
-                except Exception as ex:
-                    if self.page:
-                        self.page.snack_bar = ft.SnackBar(ft.Text(f"Ошибка чтения: {ex}"))
-                        self.page.snack_bar.open = True
-                        self.page.update()
+        self.ass_picker.pick_files(
+            dialog_title="Открыть файл субтитров",
+            allowed_extensions=["ass", "txt"],
+            with_data=True,
+        )
 
-        picker = ft.FilePicker(on_result=_picked)
-        if self.page:
-            self.page.overlay.append(picker)
-            self.page.update()
-            picker.pick_files(allowed_extensions=["ass", "txt"])
+    def _on_ass_picked(self, result: ft.FilePickerResultEvent):
+        if result.files:
+            f = result.files[0]
+            try:
+                if f.bytes:
+                    content = f.bytes.decode("utf-8", errors="replace")
+                elif f.path:
+                    with open(f.path, "r", encoding="utf-8") as fp:
+                        content = fp.read()
+                else:
+                    raise ValueError("Файл не содержит данных")
+                self.load_ass_text(content)
+            except Exception as ex:
+                if self.page:
+                    self.page.snack_bar = ft.SnackBar(ft.Text(f"Ошибка чтения: {ex}"))
+                    self.page.snack_bar.open = True
+                    self.page.update()
 
     def _on_romanize(self, e):
         if not self.document:

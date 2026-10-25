@@ -54,7 +54,14 @@ class SPSView(ft.Container):
         self.selected_syllable_id: Optional[str] = None
         self.min_peak_sps: float = 6.0
 
+        # Pre-instantiated Services
+        self.meas_save_picker = ft.FilePicker(on_result=self._on_meas_save_result)
+        self.meas_open_picker = ft.FilePicker(on_result=self._on_meas_open_result)
+
         self._build_controls()
+
+    def get_services(self) -> list[ft.Service]:
+        return [self.meas_save_picker, self.meas_open_picker]
 
     def set_document(self, doc: AssDocument, timeline: Optional[MeasurementTimeline] = None):
         """Set the active ASS document and initialize/sync the measurement timeline."""
@@ -499,49 +506,56 @@ class SPSView(ft.Container):
                 self.page.snack_bar.open = True
                 self.page.update()
             return
+        self.meas_save_picker.save_file(dialog_title="Экспорт замеров SPS", file_name="sps_measurements.json")
 
-        def _saved(result: ft.FilePickerResultEvent):
-            if result.path:
-                try:
-                    save_measurements(result.path, self.timeline)
-                    if self.page:
-                        self.page.snack_bar = ft.SnackBar(ft.Text(f"Замеры сохранены: {os.path.basename(result.path)}"))
-                        self.page.snack_bar.open = True
-                        self.page.update()
-                except Exception as ex:
-                    if self.page:
-                        self.page.snack_bar = ft.SnackBar(ft.Text(f"Ошибка сохранения: {ex}"))
-                        self.page.snack_bar.open = True
-                        self.page.update()
-
-        picker = ft.FilePicker(on_result=_saved)
-        if self.page:
-            self.page.overlay.append(picker)
-            self.page.update()
-            picker.save_file(dialog_title="Экспорт замеров SPS", file_name="sps_measurements.json")
+    def _on_meas_save_result(self, result: ft.FilePickerResultEvent):
+        if result.path and self.timeline:
+            try:
+                save_measurements(result.path, self.timeline)
+                if self.page:
+                    self.page.snack_bar = ft.SnackBar(ft.Text(f"Замеры сохранены: {os.path.basename(result.path)}"))
+                    self.page.snack_bar.open = True
+                    self.page.update()
+            except Exception as ex:
+                if self.page:
+                    self.page.snack_bar = ft.SnackBar(ft.Text(f"Ошибка сохранения: {ex}"))
+                    self.page.snack_bar.open = True
+                    self.page.update()
 
     def _on_import_measurements(self, e):
-        def _picked(result: ft.FilePickerResultEvent):
-            if result.files and self.timeline:
-                p = result.files[0].path
-                try:
-                    load_measurements(p, self.timeline)
-                    self._recalculate_bursts()
-                    self._refresh_ui()
-                    if self.on_measurements_changed:
-                        self.on_measurements_changed(self.timeline)
-                    if self.page:
-                        self.page.snack_bar = ft.SnackBar(ft.Text(f"Замеры загружены: {result.files[0].name}"))
-                        self.page.snack_bar.open = True
-                        self.page.update()
-                except Exception as ex:
-                    if self.page:
-                        self.page.snack_bar = ft.SnackBar(ft.Text(f"Ошибка загрузки: {ex}"))
-                        self.page.snack_bar.open = True
-                        self.page.update()
+        self.meas_open_picker.pick_files(
+            dialog_title="Импорт замеров SPS",
+            allowed_extensions=["json"],
+            with_data=True,
+        )
 
-        picker = ft.FilePicker(on_result=_picked)
-        if self.page:
-            self.page.overlay.append(picker)
-            self.page.update()
-            picker.pick_files(dialog_title="Импорт замеров SPS", allowed_extensions=["json"])
+    def _on_meas_open_result(self, result: ft.FilePickerResultEvent):
+        if result.files and self.timeline:
+            f = result.files[0]
+            try:
+                if f.bytes:
+                    data = json.loads(f.bytes.decode("utf-8", errors="replace"))
+                    records: Dict[str, MeasurementRecord] = {}
+                    for item in data.get("measurements", []):
+                        rec = MeasurementRecord(
+                            str(item["syllable_id"]),
+                            float(item["measured_start"]),
+                            float(item["measured_end"]),
+                        )
+                        records[rec.syllable_id] = rec
+                    apply_measurements(records, self.timeline)
+                elif f.path:
+                    load_measurements(f.path, self.timeline)
+                self._recalculate_bursts()
+                self._refresh_ui()
+                if self.on_measurements_changed:
+                    self.on_measurements_changed(self.timeline)
+                if self.page:
+                    self.page.snack_bar = ft.SnackBar(ft.Text(f"Замеры загружены: {f.name}"))
+                    self.page.snack_bar.open = True
+                    self.page.update()
+            except Exception as ex:
+                if self.page:
+                    self.page.snack_bar = ft.SnackBar(ft.Text(f"Ошибка загрузки: {ex}"))
+                    self.page.snack_bar.open = True
+                    self.page.update()

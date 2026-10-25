@@ -147,6 +147,17 @@ def main(page: ft.Page):
 
     views = [mfa_view, editor_view, sps_view, burst_view, export_view]
 
+    # Register all view services (FilePicker, etc.) in page.services before user interaction
+    for v in views:
+        if hasattr(v, "get_services"):
+            for service in v.get_services():
+                if hasattr(page, "services"):
+                    if service not in page.services:
+                        page.services.append(service)
+                elif hasattr(page, "overlay"):
+                    if service not in page.overlay:
+                        page.overlay.append(service)
+
     # Container holding active view
     page_container = ft.Container(content=views[0], expand=True)
 

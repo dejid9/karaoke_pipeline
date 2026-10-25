@@ -34,9 +34,16 @@ class MFAView(ft.Container):
         # Selected audio & lyrics
         self.selected_audio_path: Optional[str] = None
         self.selected_audio_name: Optional[str] = None
+        self.selected_audio_bytes: Optional[bytes] = None
+
+        # Pre-instantiated Services
+        self.audio_picker = ft.FilePicker(on_result=self._on_audio_picked)
 
         # Build UI controls
         self._build_controls()
+
+    def get_services(self) -> list[ft.Service]:
+        return [self.audio_picker]
 
     def _build_controls(self):
         # 1. Colab Server Connection Section
@@ -191,24 +198,21 @@ class MFAView(ft.Container):
         self.update()
 
     def _on_pick_audio(self, e):
-        # FilePicker callback
-        def _file_picked(result: ft.FilePickerResultEvent):
-            if result.files:
-                f = result.files[0]
-                self.selected_audio_path = f.path
-                self.selected_audio_name = f.name
-                self.audio_info_text.value = f"Файл: {f.name}"
-                self.audio_info_text.color = COLOR_SUCCESS
-                self.update()
+        self.audio_picker.pick_files(
+            dialog_title="Выберите аудиофайл",
+            allowed_extensions=["wav", "mp3", "m4a", "flac", "ogg"],
+            with_data=True,
+        )
 
-        picker = ft.FilePicker(on_result=_file_picked)
-        if self.page:
-            self.page.overlay.append(picker)
-            self.page.update()
-            picker.pick_files(
-                dialog_title="Выберите аудиофайл",
-                allowed_extensions=["wav", "mp3", "m4a", "flac", "ogg"],
-            )
+    def _on_audio_picked(self, result: ft.FilePickerResultEvent):
+        if result.files:
+            f = result.files[0]
+            self.selected_audio_path = f.path
+            self.selected_audio_name = f.name
+            self.selected_audio_bytes = f.bytes
+            self.audio_info_text.value = f"Файл: {f.name}"
+            self.audio_info_text.color = COLOR_SUCCESS
+            self.update()
 
     def _on_align_click(self, e):
         url = self.url_input.value.strip()
@@ -218,7 +222,7 @@ class MFAView(ft.Container):
             self.update()
             return
 
-        if not self.selected_audio_path:
+        if not self.selected_audio_path and not self.selected_audio_bytes:
             self.log_text.value = "Ошибка: выберите аудиофайл"
             self.log_text.color = COLOR_ERROR
             self.update()
@@ -242,7 +246,7 @@ class MFAView(ft.Container):
             try:
                 lang = self.lang_dropdown.value or "russian"
                 res = self.client.align(
-                    audio_path_or_bytes=self.selected_audio_path,
+                    audio_path_or_bytes=self.selected_audio_bytes or self.selected_audio_path,
                     filename=self.selected_audio_name or "audio.wav",
                     transcript=transcript,
                     language=lang,
