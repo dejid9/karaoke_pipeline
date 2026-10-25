@@ -1,0 +1,35 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Binary tools & executables (Windows ffmpeg build etc)
+tools/
+*.exe
+*.dll
+
+# Environments
+.venv/
+venv/
+ENV/
+env/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Large media files and temporary test renders
+*.mp4
+*.m4a
+*.wav
+*.flac
+*.png
+work/
+scratch/
+folder/
+input/
+
+# But keep source code and tests intact
+!karaoke_mobile/assets/

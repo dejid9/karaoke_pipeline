@@ -1,0 +1,17 @@
+name: mfa
+channels:
+  - conda-forge
+dependencies:
+  - python
+  - tk
+  - ffmpeg
+  - numpy
+  - python-sounddevice
+  - montreal-forced-aligner
+  - pip
+  - pip:
+      - langdetect>=1.0.9
+      - pyphen>=0.17
+  # Japanese preprocessing is optional. If the packages are not available
+  # from your Conda channels, install them with pip inside this same env:
+  #   python -m pip install sudachipy sudachidict_core

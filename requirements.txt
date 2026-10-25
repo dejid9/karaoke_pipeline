@@ -1,0 +1,10 @@
+# Core GUI/runtime dependencies used by the current workbench.
+numpy>=1.26
+sounddevice>=0.5
+langdetect>=1.0.9
+pyphen>=0.17
+Pillow>=10.0
+
+# Optional, install into the selected MFA Conda environment for Japanese mode:
+# sudachipy
+# sudachidict_core

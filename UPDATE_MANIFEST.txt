@@ -1,0 +1,12 @@
+Update 033 delta — install over Update 032
+
+Changed/new files:
+karaoke_core/editor.py
+karaoke_gui/app.py
+karaoke_gui/keybindings.py
+karaoke_gui/session.py
+karaoke_gui/timeline.py
+tests/test_update032_transport_limits.py
+tests/test_update033_transport_blank_split.py
+FINAL_WORKFLOW.md
+UPDATE_033.md
