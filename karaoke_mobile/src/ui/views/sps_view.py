@@ -289,10 +289,18 @@ class SPSView(ft.Container):
         self.meas_undo_btn = ft.FilledButton("↶", tooltip="Отменить замер", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=self.undo_measurement)
         self.meas_redo_btn = ft.FilledButton("↷", tooltip="Повторить замер", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=self.redo_measurement)
 
+        self.prev_syl_btn = ft.FilledButton("◀ Пред", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(8, 5, 8, 5)), on_click=lambda e: self._nav_syllable(-1))
+        self.next_syl_btn = ft.FilledButton("След ▶", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(8, 5, 8, 5)), on_click=lambda e: self._nav_syllable(1))
+
+        self.nudge_start_minus50 = ft.FilledButton("-50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(5, 4, 5, 4)), on_click=lambda e: self._nudge("start", -0.05))
         self.nudge_start_minus = ft.FilledButton("-10ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: self._nudge("start", -0.01))
         self.nudge_start_plus = ft.FilledButton("+10ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: self._nudge("start", 0.01))
+        self.nudge_start_plus50 = ft.FilledButton("+50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(5, 4, 5, 4)), on_click=lambda e: self._nudge("start", 0.05))
+
+        self.nudge_end_minus50 = ft.FilledButton("-50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(5, 4, 5, 4)), on_click=lambda e: self._nudge("end", -0.05))
         self.nudge_end_minus = ft.FilledButton("-10ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: self._nudge("end", -0.01))
         self.nudge_end_plus = ft.FilledButton("+10ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: self._nudge("end", 0.01))
+        self.nudge_end_plus50 = ft.FilledButton("+50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(5, 4, 5, 4)), on_click=lambda e: self._nudge("end", 0.05))
 
         sps_hint = ft.Text(
             "Start и End независимы: End можно поставить раньше Start (отрицательная длительность для опережающего пения).",
@@ -308,9 +316,11 @@ class SPSView(ft.Container):
                     ft.Row(
                         [
                             ft.Text("Start:", size=12, color=pal.muted),
+                            self.nudge_start_minus50,
                             self.nudge_start_minus,
                             self.meas_start_field,
                             self.nudge_start_plus,
+                            self.nudge_start_plus50,
                         ],
                         wrap=True,
                         spacing=4,
@@ -319,9 +329,11 @@ class SPSView(ft.Container):
                     ft.Row(
                         [
                             ft.Text("End: ", size=12, color=pal.muted),
+                            self.nudge_end_minus50,
                             self.nudge_end_minus,
                             self.meas_end_field,
                             self.nudge_end_plus,
+                            self.nudge_end_plus50,
                         ],
                         wrap=True,
                         spacing=4,
@@ -329,12 +341,15 @@ class SPSView(ft.Container):
                     ),
                     ft.Row(
                         [
+                            self.prev_syl_btn,
+                            self.next_syl_btn,
                             self.meas_apply_btn,
                             self.meas_reset_btn,
                             self.meas_undo_btn,
                             self.meas_redo_btn,
                         ],
-                        spacing=6,
+                        wrap=True,
+                        spacing=5,
                     ),
                     sps_hint,
                 ],
@@ -347,11 +362,12 @@ class SPSView(ft.Container):
         )
 
         # 4. Syllables in selected burst chip row
+        self.syllable_chips_title = ft.Text("Слоги выбранного бёрста (нажмите для точного замера)", size=13, weight=ft.FontWeight.BOLD, color=pal.fg)
         self.syllable_chips_row = ft.Row(wrap=True, spacing=6, run_spacing=6)
         self.syllable_chips_container = ft.Container(
             content=ft.Column(
                 [
-                    ft.Text("Слоги выбранного бёрста (нажмите для точного замера)", size=13, weight=ft.FontWeight.BOLD, color=pal.fg),
+                    self.syllable_chips_title,
                     self.syllable_chips_row,
                 ],
                 spacing=6,
@@ -478,6 +494,18 @@ class SPSView(ft.Container):
             on_click=_on_select,
         )
 
+    def _nav_syllable(self, step: int):
+        if not self.timeline or not self.timeline.syllables:
+            return
+        all_ids = [s.id for s in self.timeline.syllables]
+        if self.selected_syllable_id in all_ids:
+            cur_idx = all_ids.index(self.selected_syllable_id)
+            new_idx = max(0, min(len(all_ids) - 1, cur_idx + step))
+            self.selected_syllable_id = all_ids[new_idx]
+        elif all_ids:
+            self.selected_syllable_id = all_ids[0]
+        self._refresh_ui()
+
     def _refresh_syllable_chips(self):
         pal = get_current_palette()
         self.syllable_chips_row.controls.clear()
@@ -485,7 +513,25 @@ class SPSView(ft.Container):
             return
 
         syl_lookup = {s.id: s for s in self.timeline.syllables}
-        display_ids = self.selected_burst.syllable_ids if self.selected_burst else [s.id for s in self.timeline.syllables[:24]]
+
+        if self.selected_burst:
+            display_ids = list(self.selected_burst.syllable_ids)
+            if self.selected_syllable_id and self.selected_syllable_id not in display_ids:
+                display_ids.append(self.selected_syllable_id)
+            self.syllable_chips_title.value = f"Слоги выбранного бёрста ({len(display_ids)} шт.)"
+        elif self.selected_syllable_id:
+            all_ids = [s.id for s in self.timeline.syllables]
+            if self.selected_syllable_id in all_ids:
+                cur_i = all_ids.index(self.selected_syllable_id)
+                start_i = max(0, cur_i - 8)
+                end_i = min(len(all_ids), cur_i + 12)
+                display_ids = all_ids[start_i:end_i]
+            else:
+                display_ids = all_ids[:24]
+            self.syllable_chips_title.value = "Слоги (контекст выбранного замера)"
+        else:
+            display_ids = [s.id for s in self.timeline.syllables[:24]]
+            self.syllable_chips_title.value = "Слоги (первые 24 шт.)"
 
         for sid in display_ids:
             s = syl_lookup.get(sid)

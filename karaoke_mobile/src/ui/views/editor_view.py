@@ -307,17 +307,11 @@ class EditorView(ft.Container):
 
         def _on_chip_tap(e):
             if self.selected_syllable_id == s.id:
-                # Toggle burst if already selected
-                self._push_undo()
-                if is_burst:
-                    uncolour_burst(self.document, [s.id])
-                else:
-                    colour_burst(self.document, [s.id])
-                if self.on_document_changed:
-                    self.on_document_changed(self.document)
+                # If already selected, tap opens full text & tag editor
+                self._open_text_dialog(s)
             else:
                 self.selected_syllable_id = s.id
-            self._refresh_ui()
+                self._refresh_ui()
 
         tag_badge = f"\\{tag_val}" if tag_val != "k" else ""
         return ft.Container(
@@ -350,27 +344,53 @@ class EditorView(ft.Container):
         ord_idx = next((i for i, item in enumerate(same_line) if item.id == s.id), -1)
         next_s = same_line[ord_idx + 1] if (ord_idx >= 0 and ord_idx + 1 < len(same_line)) else None
 
-        # 1. Header Row
+        # 1. Header Row with quick navigation and close
+        def _nav(step: int):
+            new_idx = idx + step
+            if 0 <= new_idx < len(all_syllables):
+                self.selected_syllable_id = all_syllables[new_idx].id
+                self._refresh_ui()
+
         title_text = ft.Text(
-            f"Слог: «{text}» ({s.id})  |  \\{s.tag_type.value}  |  {dur_ms} мс ({s.duration_cs}cs)",
-            size=13,
+            f"«{text}»  ({dur_ms}мс, \\{s.tag_type.value})",
+            size=14,
             weight=ft.FontWeight.BOLD,
             color=pal.fg,
         )
-        time_text = ft.Text(f"{format_ass_time(s.start)} - {format_ass_time(s.end)}", size=11, color=pal.muted)
-
-        close_btn = ft.IconButton(
-            icon=ft.Icons.CLOSE,
-            icon_size=18,
-            tooltip="Снять выделение",
-            icon_color=pal.muted,
-            on_click=lambda e: self._deselect(),
-        )
+        time_text = ft.Text(f"{format_ass_time(s.start)} - {format_ass_time(s.end)} ({s.id})", size=11, color=pal.muted)
 
         header_row = ft.Row(
             [
                 ft.Column([title_text, time_text], spacing=1, expand=True),
-                close_btn,
+                ft.Row(
+                    [
+                        ft.IconButton(
+                            icon=ft.Icons.ARROW_BACK,
+                            tooltip="Предыдущий слог",
+                            icon_size=20,
+                            icon_color=pal.fg if idx > 0 else pal.muted,
+                            disabled=idx <= 0,
+                            on_click=lambda e: _nav(-1),
+                        ),
+                        ft.IconButton(
+                            icon=ft.Icons.ARROW_FORWARD,
+                            tooltip="Следующий слог",
+                            icon_size=20,
+                            icon_color=pal.fg if idx < len(all_syllables) - 1 else pal.muted,
+                            disabled=idx >= len(all_syllables) - 1,
+                            on_click=lambda e: _nav(1),
+                        ),
+                        ft.IconButton(
+                            icon=ft.Icons.CLOSE,
+                            icon_size=20,
+                            tooltip="Снять выделение",
+                            icon_color=pal.muted,
+                            on_click=lambda e: self._deselect(),
+                        ),
+                    ],
+                    spacing=0,
+                    tight=True,
+                ),
             ],
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
         )
@@ -405,22 +425,22 @@ class EditorView(ft.Container):
 
         timing_row = ft.Row(
             [
-                ft.Text("Длительность:", size=11, color=pal.muted),
-                ft.FilledButton("-50мс", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: _nudge_dur(-5)),
-                ft.FilledButton("-10мс", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: _nudge_dur(-1)),
-                ft.FilledButton("+10мс", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: _nudge_dur(1)),
-                ft.FilledButton("+50мс", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: _nudge_dur(5)),
+                ft.Text("Длит:", size=11, weight=ft.FontWeight.BOLD, color=pal.muted),
+                ft.FilledButton("-50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: _nudge_dur(-5)),
+                ft.FilledButton("-10ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: _nudge_dur(-1)),
+                ft.FilledButton("+10ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: _nudge_dur(1)),
+                ft.FilledButton("+50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: _nudge_dur(5)),
                 ft.VerticalDivider(width=4),
-                ft.Text("Шов со след.:", size=11, color=pal.muted),
-                ft.FilledButton("⇥ -10мс", disabled=not next_s, style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: _nudge_boundary(-1)),
-                ft.FilledButton("+10мс ⇤", disabled=not next_s, style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: _nudge_boundary(1)),
+                ft.Text("Шов:", size=11, weight=ft.FontWeight.BOLD, color=pal.muted),
+                ft.FilledButton("⇥ -10ms", disabled=not next_s, style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: _nudge_boundary(-1)),
+                ft.FilledButton("+10ms ⇤", disabled=not next_s, style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: _nudge_boundary(1)),
             ],
             wrap=True,
             spacing=4,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
-        # 3. Actions Row 1: Structural operations (Burst, Split, Merge, Insert, Delete)
+        # 3. Actions Row: Text, Burst, Split, Merge, Insert, Delete, and Jump to SPS
         def _toggle_burst(e):
             self._push_undo()
             if is_burst:
@@ -487,39 +507,21 @@ class EditorView(ft.Container):
 
         actions_row = ft.Row(
             [
+                ft.FilledButton("✏ Текст", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(8, 5, 8, 5)), on_click=lambda e: self._open_text_dialog(s)),
                 ft.FilledButton(
-                    "Снять бёрст" if is_burst else "🔥 Бёрст",
+                    "Снять 🔥" if is_burst else "🔥 Бёрст",
                     style=ft.ButtonStyle(
                         bgcolor=pal.panel if is_burst else pal.danger,
                         color=pal.fg if is_burst else pal.accent_fg,
-                        padding=ft.Padding(10, 6, 10, 6),
+                        padding=ft.Padding(8, 5, 8, 5),
                     ),
                     on_click=_toggle_burst,
                 ),
-                ft.FilledButton("✂ Разрезать", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(8, 6, 8, 6)), on_click=_split),
-                ft.FilledButton("🔗 Слить", disabled=not next_s, style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(8, 6, 8, 6)), on_click=_merge),
-                ft.FilledButton("➕ Вставить", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(8, 6, 8, 6)), on_click=_insert),
-                ft.FilledButton("🗑", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.danger, padding=ft.Padding(8, 6, 8, 6)), on_click=_delete),
-            ],
-            wrap=True,
-            spacing=4,
-        )
-
-        # 4. Actions Row 2: Text & Tag edit, Navigation & Jump
-        def _nav(step: int):
-            new_idx = idx + step
-            if 0 <= new_idx < len(all_syllables):
-                self.selected_syllable_id = all_syllables[new_idx].id
-                self._refresh_ui()
-
-        nav_row = ft.Row(
-            [
-                ft.FilledButton("↶", tooltip="Отменить", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=self.undo),
-                ft.FilledButton("↷", tooltip="Повторить", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=self.redo),
-                ft.FilledButton("◀ Пред", disabled=idx <= 0, style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(8, 4, 8, 4)), on_click=lambda e: _nav(-1)),
-                ft.FilledButton("След ▶", disabled=idx >= len(all_syllables) - 1, style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(8, 4, 8, 4)), on_click=lambda e: _nav(1)),
-                ft.FilledButton("✏ Текст и тип", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(10, 4, 10, 4)), on_click=lambda e: self._open_text_dialog(s)),
-                ft.FilledButton("🎯 В точный SPS", style=ft.ButtonStyle(bgcolor=pal.accent, color=pal.accent_fg, padding=ft.Padding(10, 4, 10, 4)), on_click=lambda e: self._transfer_to_sps()),
+                ft.FilledButton("✂ Резать", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(7, 5, 7, 5)), on_click=_split),
+                ft.FilledButton("🔗 Слить", disabled=not next_s, style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(7, 5, 7, 5)), on_click=_merge),
+                ft.FilledButton("➕ Вставить", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(7, 5, 7, 5)), on_click=_insert),
+                ft.FilledButton("🗑", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.danger, padding=ft.Padding(8, 5, 8, 5)), on_click=_delete),
+                ft.FilledButton("🎯 В SPS", style=ft.ButtonStyle(bgcolor=pal.accent, color=pal.accent_fg, padding=ft.Padding(8, 5, 8, 5)), on_click=lambda e: self._transfer_to_sps()),
             ],
             wrap=True,
             spacing=4,
@@ -531,7 +533,6 @@ class EditorView(ft.Container):
                     header_row,
                     timing_row,
                     actions_row,
-                    nav_row,
                 ],
                 spacing=5,
             ),
@@ -567,6 +568,20 @@ class EditorView(ft.Container):
             value=s.tag_type.value,
         )
 
+        def _toggle_unspoken(e):
+            val = text_input.value.strip()
+            if val.startswith("[") and val.endswith("]"):
+                text_input.value = val[1:-1].strip()
+            else:
+                text_input.value = f"[{val}]"
+            self.page.update()
+
+        unspoken_btn = ft.OutlinedButton(
+            "[...] Непроизнесённое",
+            tooltip="Пометить как [непроизнесённый] слог (не окрашивается и исключается из SPS)",
+            on_click=_toggle_unspoken,
+        )
+
         def _save(e):
             try:
                 self._push_undo()
@@ -587,7 +602,7 @@ class EditorView(ft.Container):
 
         dialog = ft.AlertDialog(
             title=ft.Text(f"Редактирование {s.id}", color=pal.fg),
-            content=ft.Column([text_input, rom_input, tag_dropdown], tight=True, spacing=10),
+            content=ft.Column([text_input, unspoken_btn, rom_input, tag_dropdown], tight=True, spacing=10),
             actions=[
                 ft.TextButton("Отмена", on_click=lambda e: setattr(dialog, "open", False) or self.page.update()),
                 ft.FilledButton("Сохранить", on_click=_save),
