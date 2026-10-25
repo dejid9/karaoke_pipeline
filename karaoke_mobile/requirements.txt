@@ -1,5 +1,2 @@
 # Mobile Karaoke App dependencies
-flet>=1.0.0
-numpy>=1.26
-Pillow>=10.0
-langdetect>=1.0.9
+flet>=1.0.5

@@ -29,7 +29,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install "flet[all]>=1.0.5"
-          pip install -r karaoke_mobile/requirements.txt
+
+      - name: Accept Android SDK licenses
+        run: |
+          yes | sdkmanager --licenses || true
 
       - name: Build Android APK
         working-directory: karaoke_mobile
