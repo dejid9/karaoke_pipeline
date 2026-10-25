@@ -1,4 +1,4 @@
-"""Mobile-optimized Karaoke Syllable & Burst Editor with Touch Ergonomics."""
+"""Mobile-optimized Karaoke Syllable & Burst Editor with Touch Ergonomics and Native File Picking."""
 
 from __future__ import annotations
 
@@ -18,21 +18,7 @@ from core.editor import (
     split_syllable,
     uncolour_burst,
 )
-from ui.theme import (
-    COLOR_BURST_ALT,
-    COLOR_BURST_BASE,
-    COLOR_ERROR,
-    COLOR_PRIMARY,
-    COLOR_SECONDARY,
-    COLOR_SUCCESS,
-    SURFACE_CARD,
-    SURFACE_ELEVATED,
-    TEXT_MUTED,
-    TEXT_PRIMARY,
-    TEXT_SECONDARY,
-    ThemePalette,
-    get_current_palette,
-)
+from ui.theme import ThemePalette, get_current_palette
 
 
 class EditorView(ft.Container):
@@ -58,15 +44,17 @@ class EditorView(ft.Container):
     def get_services(self) -> list[ft.Service]:
         return [self.ass_picker]
 
-    def apply_theme(self, pal: ThemePalette):
-        """Update colors dynamically when theme changes."""
-        self._refresh_ui()
-
     def _safe_update(self):
         try:
             self.update()
         except RuntimeError:
             pass
+
+    def apply_theme(self, pal: ThemePalette):
+        """Update colors dynamically when theme changes."""
+        self._build_controls()
+        self._refresh_ui()
+        self._safe_update()
 
     def load_ass_text(self, ass_text: str):
         """Load an ASS script into the editor."""
@@ -93,11 +81,12 @@ class EditorView(ft.Container):
         pal = get_current_palette()
         self.stats_text = ft.Text("Слогов: 0 | Бёрст: 0", size=12, color=pal.muted)
 
+        # Native FilePicker Action for reliable mobile triggering
         self.open_file_btn = ft.IconButton(
             icon=ft.Icons.FOLDER_OPEN,
-            tooltip="Открыть .ass файл",
+            tooltip="Открыть файл субтитров (.ass)",
             icon_color=pal.accent,
-            on_click=self._on_open_ass,
+            action=ft.PickFiles(self.ass_picker, with_data=True),
         )
 
         self.romanize_btn = ft.FilledButton(
@@ -238,7 +227,7 @@ class EditorView(ft.Container):
         elif is_burst:
             chip_bg = pal.danger
             chip_border = ft.Border.all(1, pal.danger)
-            chip_fg = "#ffffff"
+            chip_fg = pal.accent_fg
         else:
             chip_bg = pal.raised
             chip_border = ft.Border.all(1, pal.border)
@@ -364,7 +353,6 @@ class EditorView(ft.Container):
                 self._show_snack(f"Не удалось разделить: {ex}", is_error=True)
 
         def _merge(e):
-            # Find next syllable in same event line
             same_line = [item for item in all_syllables if item.event_line_index == s.event_line_index]
             ord_idx = next((i for i, item in enumerate(same_line) if item.id == s.id), -1)
             if ord_idx >= 0 and ord_idx + 1 < len(same_line):
@@ -411,7 +399,7 @@ class EditorView(ft.Container):
                     "Снять бёрст" if is_burst else "🔥 Бёрст",
                     style=ft.ButtonStyle(
                         bgcolor=pal.panel if is_burst else pal.danger,
-                        color=pal.fg if is_burst else "#ffffff",
+                        color=pal.fg if is_burst else pal.accent_fg,
                         padding=ft.Padding(10, 6, 10, 6),
                     ),
                     on_click=_toggle_burst,
@@ -541,13 +529,6 @@ class EditorView(ft.Container):
         self.page.dialog = dialog
         dialog.open = True
         self.page.update()
-
-    def _on_open_ass(self, e):
-        self.ass_picker.pick_files(
-            dialog_title="Открыть файл субтитров",
-            allowed_extensions=["ass", "txt"],
-            with_data=True,
-        )
 
     def _on_ass_picked(self, result: ft.FilePickerResultEvent):
         if result.files:

@@ -11,13 +11,7 @@ from core.measurements import apply_measurements
 from core.project_bundle import ProjectBundle
 from core.sps import MeasurementTimeline
 from ui.theme import (
-    COLOR_PRIMARY,
     DEFAULT_THEME,
-    SURFACE_DARK,
-    SURFACE_ELEVATED,
-    TEXT_MUTED,
-    TEXT_PRIMARY,
-    ThemePalette,
     apply_mobile_theme,
     get_current_palette,
     theme_names,
@@ -63,6 +57,8 @@ def main(page: ft.Page):
             sync_document(doc)
             # Switch to editor tab
             nav_bar.selected_index = 1
+            cur_pal = get_current_palette()
+            editor_view.apply_theme(cur_pal)
             page_container.content = editor_view
             page.update()
         except Exception as e:
@@ -90,6 +86,8 @@ def main(page: ft.Page):
             sps_view.set_document(current_document, current_timeline)
             sps_view.focus_syllable(syllable_id)
         nav_bar.selected_index = 2
+        cur_pal = get_current_palette()
+        sps_view.apply_theme(cur_pal)
         page_container.content = views[2]
         page.update()
 
@@ -103,7 +101,7 @@ def main(page: ft.Page):
         # Update MFA transcript
         if bundle.transcript:
             mfa_view.transcript_input.value = bundle.transcript
-            mfa_view.update()
+            mfa_view._safe_update()
 
         # Update Subtitles & Measurements
         if bundle.ass_text:
@@ -115,6 +113,8 @@ def main(page: ft.Page):
                 sync_document(doc, tl)
                 # Switch to Editor tab
                 nav_bar.selected_index = 1
+                cur_pal = get_current_palette()
+                editor_view.apply_theme(cur_pal)
                 page_container.content = editor_view
                 page.update()
             except Exception as ex:
@@ -163,27 +163,34 @@ def main(page: ft.Page):
 
     views = [mfa_view, editor_view, sps_view, burst_view, export_view]
 
-    # Register all view services (FilePicker, etc.) in page.services before user interaction
+    # Register all view services (Native FilePickers, etc.) in page.services before user interaction
     for v in views:
         if hasattr(v, "get_services"):
             for service in v.get_services():
-                if hasattr(page, "services"):
-                    if service not in page.services:
-                        page.services.append(service)
-                elif hasattr(page, "overlay"):
-                    if service not in page.overlay:
-                        page.overlay.append(service)
+                if hasattr(page, "services") and service not in page.services:
+                    page.services.append(service)
+                if hasattr(page, "overlay") and service not in page.overlay:
+                    page.overlay.append(service)
+
+    # Initial palette apply across all views
+    for v in views:
+        if hasattr(v, "apply_theme"):
+            v.apply_theme(pal)
 
     # Container holding active view
     page_container = ft.Container(content=views[0], expand=True)
 
     def on_nav_change(e):
         idx = nav_bar.selected_index
+        cur_pal = get_current_palette()
         # If switching to SPS or Editor view, ensure state is synced
         if idx == 2 and current_document:
             sps_view.set_document(current_document, current_timeline)
         elif idx == 1 and current_document:
             editor_view._refresh_ui()
+
+        if hasattr(views[idx], "apply_theme"):
+            views[idx].apply_theme(cur_pal)
         page_container.content = views[idx]
         page.update()
 
@@ -230,7 +237,7 @@ def main(page: ft.Page):
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
         ),
         bgcolor=pal.panel,
-        padding=ft.Padding(14, 6, 14, 6),
+        padding=ft.Padding(14, 8, 14, 8),
         border=ft.Border(bottom=ft.BorderSide(1, pal.border)),
     )
 
@@ -269,15 +276,21 @@ def main(page: ft.Page):
         ],
     )
 
+    # Wrapped in SafeArea so Android status bar (clock/notch/battery) never overlaps the app
     page.add(
-        ft.Column(
-            [
-                top_bar,
-                page_container,
-                nav_bar,
-            ],
+        ft.SafeArea(
+            content=ft.Column(
+                [
+                    top_bar,
+                    page_container,
+                    nav_bar,
+                ],
+                expand=True,
+                spacing=0,
+            ),
             expand=True,
-            spacing=0,
+            avoid_intrusions_top=True,
+            avoid_intrusions_bottom=True,
         )
     )
 

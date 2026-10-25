@@ -11,14 +11,7 @@ from typing import Callable, Optional
 import flet as ft
 
 from core.render import RenderLayoutSettings
-from ui.theme import (
-    COLOR_PRIMARY,
-    SURFACE_CARD,
-    SURFACE_ELEVATED,
-    TEXT_MUTED,
-    TEXT_PRIMARY,
-    TEXT_SECONDARY,
-)
+from ui.theme import ThemePalette, get_current_palette
 
 
 class BurstView(ft.Container):
@@ -27,7 +20,7 @@ class BurstView(ft.Container):
     def __init__(self, on_settings_changed: Optional[Callable[[RenderLayoutSettings], None]] = None):
         super().__init__()
         self.expand = True
-        self.padding = 16
+        self.padding = 12
         self.on_settings_changed = on_settings_changed
 
         # State
@@ -40,15 +33,20 @@ class BurstView(ft.Container):
         self._build_controls()
         self._start_preview_animation()
 
-    def apply_theme(self, pal: ThemePalette):
-        """Update colors dynamically when theme changes."""
-        self._build_controls()
+    def _safe_update(self):
         try:
             self.update()
         except RuntimeError:
             pass
 
+    def apply_theme(self, pal: ThemePalette):
+        """Update colors dynamically when theme changes."""
+        self._build_controls()
+        self._safe_update()
+
     def _build_controls(self):
+        pal = get_current_palette()
+
         # 1. Mode Selector
         self.mode_radio = ft.RadioGroup(
             content=ft.Column(
@@ -67,26 +65,27 @@ class BurstView(ft.Container):
         mode_card = ft.Container(
             content=ft.Column(
                 [
-                    ft.Text("Режим перелива бёрста", size=15, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
+                    ft.Text("Режим перелива бёрста", size=15, weight=ft.FontWeight.BOLD, color=pal.fg),
                     self.mode_radio,
                 ],
-                spacing=10,
+                spacing=8,
             ),
-            bgcolor=SURFACE_CARD,
-            padding=16,
+            bgcolor=pal.panel,
+            padding=14,
             border_radius=12,
+            border=ft.Border.all(1, pal.border),
         )
 
         # 2. Live Animated Preview Widget
         self.preview_syllable_1 = ft.Text("БЁРСТ", size=24, weight=ft.FontWeight.BOLD, color=self.base_color_hex)
         self.preview_syllable_2 = ft.Text("ПЕРЕЛИВ", size=24, weight=ft.FontWeight.BOLD, color=self.alt_color_hex)
         self.preview_syllable_3 = ft.Text("СИММЕТРИЧНЫЙ", size=24, weight=ft.FontWeight.BOLD, color=self.base_color_hex)
-        self.preview_normal_text = ft.Text("обычный белый", size=20, color="#FFFFFF")
+        self.preview_normal_text = ft.Text("обычный слог", size=20, color=pal.fg)
 
         preview_card = ft.Container(
             content=ft.Column(
                 [
-                    ft.Text("Интерактивный предпросмотр (Live Preview)", size=13, color=TEXT_MUTED),
+                    ft.Text("Интерактивный предпросмотр (Live Preview)", size=12, color=pal.muted),
                     ft.Row(
                         [
                             self.preview_syllable_1,
@@ -99,12 +98,12 @@ class BurstView(ft.Container):
                     ),
                 ],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                spacing=12,
+                spacing=10,
             ),
-            bgcolor="#11111b",
-            padding=20,
+            bgcolor=pal.raised,
+            padding=16,
             border_radius=12,
-            border=ft.Border.all(1, SURFACE_ELEVATED),
+            border=ft.Border.all(1, pal.border),
         )
 
         # 3. Settings controls
@@ -116,94 +115,95 @@ class BurstView(ft.Container):
             label="{value} Гц",
             on_change=self._on_hz_change,
         )
-        self.hz_label = ft.Text(f"Частота пульсации: {self.pulse_hz:.1f} Гц ({(self.pulse_hz * 60):.0f} BPM)", size=13, color=TEXT_SECONDARY)
+        self.hz_label = ft.Text(f"Частота пульсации: {self.pulse_hz:.1f} Гц ({(self.pulse_hz * 60):.0f} BPM)", size=13, color=pal.muted)
 
         self.base_color_btn = ft.FilledButton(
             "Базовый: Красный",
             icon=ft.Icons.COLOR_LENS,
-            style=ft.ButtonStyle(bgcolor="#FF0000", color="#FFFFFF"),
+            style=ft.ButtonStyle(bgcolor=self.base_color_hex, color="#FFFFFF"),
             on_click=self._on_pick_base_color,
         )
         self.alt_color_btn = ft.FilledButton(
             "Второй: Оранжевый",
             icon=ft.Icons.COLOR_LENS,
-            style=ft.ButtonStyle(bgcolor="#FF8000", color="#FFFFFF"),
+            style=ft.ButtonStyle(bgcolor=self.alt_color_hex, color="#FFFFFF"),
             on_click=self._on_pick_alt_color,
         )
 
         settings_card = ft.Container(
             content=ft.Column(
                 [
-                    ft.Text("Параметры цвета и ритма", size=15, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
+                    ft.Text("Параметры цвета и ритма", size=15, weight=ft.FontWeight.BOLD, color=pal.fg),
                     ft.Row([self.base_color_btn, self.alt_color_btn], wrap=True),
                     self.hz_label,
                     self.hz_slider,
                 ],
-                spacing=12,
+                spacing=8,
             ),
-            bgcolor=SURFACE_CARD,
-            padding=16,
+            bgcolor=pal.panel,
+            padding=14,
             border_radius=12,
+            border=ft.Border.all(1, pal.border),
         )
 
         self.content = ft.ListView(
             controls=[
-                ft.Text("Настройка бёрст-стиля", size=22, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
-                ft.Text("Плавные гармонические синусоидальные переливы по цветовому кубу", size=13, color=TEXT_MUTED),
-                ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
+                ft.Text("Стилизация и пульсация", size=20, weight=ft.FontWeight.BOLD, color=pal.fg),
+                ft.Text("Визуальный подбор гармоничных переливов для бёрстов и тайминг синусоиды", size=12, color=pal.muted),
+                ft.Divider(height=8, color=ft.Colors.TRANSPARENT),
                 preview_card,
-                ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
+                ft.Divider(height=8, color=ft.Colors.TRANSPARENT),
                 mode_card,
-                ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
+                ft.Divider(height=8, color=ft.Colors.TRANSPARENT),
                 settings_card,
             ],
-            spacing=10,
+            spacing=8,
         )
 
     def _start_preview_animation(self):
-        """Run smooth sinusoidal interpolation animation on preview labels."""
+        """Background thread updating the live color preview smoothly at ~30 FPS."""
         def _anim_loop():
-            start_time = time.time()
+            start_t = time.time()
             while self.anim_running:
-                try:
-                    if self.current_mode == "dynamic" and self.page is not None:
-                        elapsed = time.time() - start_time
-                        # Sinusoidal factor: 0.5 * (1 - cos(2*pi * hz * t))
-                        factor = 0.5 * (1.0 - math.cos(2.0 * math.pi * self.pulse_hz * elapsed))
-                        curr_color = self._interpolate_color(self.base_color_hex, self.alt_color_hex, factor)
+                t = time.time() - start_t
+                if self.current_mode == "dynamic":
+                    # Sinusoidal pulse wave
+                    phase = (t * self.pulse_hz * 2.0 * math.pi)
+                    factor_1 = (math.sin(phase) + 1.0) / 2.0
+                    factor_2 = (math.sin(phase + math.pi / 2.0) + 1.0) / 2.0
+                    factor_3 = (math.sin(phase + math.pi) + 1.0) / 2.0
 
-                        # Update colors on UI thread
-                        self.preview_syllable_1.color = curr_color
-                        self.preview_syllable_2.color = curr_color
-                        self.preview_syllable_3.color = curr_color
-                        self.preview_syllable_1.update()
-                        self.preview_syllable_2.update()
-                        self.preview_syllable_3.update()
-                except Exception:
-                    pass
-                time.sleep(0.05)
+                    c1 = self._interpolate_color(self.base_color_hex, self.alt_color_hex, factor_1)
+                    c2 = self._interpolate_color(self.base_color_hex, self.alt_color_hex, factor_2)
+                    c3 = self._interpolate_color(self.base_color_hex, self.alt_color_hex, factor_3)
+
+                    self.preview_syllable_1.color = c1
+                    self.preview_syllable_2.color = c2
+                    self.preview_syllable_3.color = c3
+                    self._safe_update()
+
+                time.sleep(0.033)
 
         threading.Thread(target=_anim_loop, daemon=True).start()
 
-    def _interpolate_color(self, hex1: str, hex2: str, t: float) -> str:
-        """Interpolate between two hex colors along the HSV hue arc."""
-        h1 = hex1.lstrip("#")
-        h2 = hex2.lstrip("#")
-        r1, g1, b1 = int(h1[0:2], 16), int(h1[2:4], 16), int(h1[4:6], 16)
-        r2, g2, b2 = int(h2[0:2], 16), int(h2[2:4], 16), int(h2[4:6], 16)
+    def _interpolate_color(self, hex_a: str, hex_b: str, factor: float) -> str:
+        """Linear interpolate between two hex colors in HSV space."""
+        factor = max(0.0, min(1.0, factor))
+        c1 = [int(hex_a[i : i + 2], 16) / 255.0 for i in (1, 3, 5)]
+        c2 = [int(hex_b[i : i + 2], 16) / 255.0 for i in (1, 3, 5)]
 
-        hv1, s1, v1 = colorsys.rgb_to_hsv(r1 / 255.0, g1 / 255.0, b1 / 255.0)
-        hv2, s2, v2 = colorsys.rgb_to_hsv(r2 / 255.0, g2 / 255.0, b2 / 255.0)
+        h1, s1, v1 = colorsys.rgb_to_hsv(*c1)
+        h2, s2, v2 = colorsys.rgb_to_hsv(*c2)
 
-        dh = (hv2 - hv1) % 1.0
+        # Handle hue shortest distance wrapping
+        dh = h2 - h1
         if dh > 0.5:
             dh -= 1.0
         elif dh < -0.5:
             dh += 1.0
-
-        h = (hv1 + t * dh) % 1.0
-        s = s1 + t * (s2 - s1)
-        v = v1 + t * (v2 - v1)
+        h = (h1 + dh * factor) % 1.0
+        s = s1 + (s2 - s1) * factor
+        v = v1 + (v2 - v1) * factor
 
         r, g, b = colorsys.hsv_to_rgb(h, s, v)
         return f"#{int(round(r * 255)):02X}{int(round(g * 255)):02X}{int(round(b * 255)):02X}"
@@ -222,25 +222,24 @@ class BurstView(ft.Container):
             self.preview_syllable_1.color = self.base_color_hex
             self.preview_syllable_2.color = self._interpolate_color(self.base_color_hex, self.alt_color_hex, 0.5)
             self.preview_syllable_3.color = self.alt_color_hex
-        self.update()
+        self._safe_update()
 
     def _on_hz_change(self, e):
         self.pulse_hz = float(self.hz_slider.value)
         bpm = self.pulse_hz * 60
         self.hz_label.value = f"Частота пульсации: {self.pulse_hz:.1f} Гц ({bpm:.0f} BPM)"
-        self.update()
+        self._safe_update()
 
     def _on_pick_base_color(self, e):
-        # Rotate through common presets
         presets = ["#FF0000", "#FF007F", "#00FF00", "#00F0FF", "#FFFF00"]
         idx = (presets.index(self.base_color_hex) + 1) % len(presets) if self.base_color_hex in presets else 0
         self.base_color_hex = presets[idx]
         self.base_color_btn.style.bgcolor = self.base_color_hex
-        self.update()
+        self._safe_update()
 
     def _on_pick_alt_color(self, e):
         presets = ["#FF8000", "#FF00FF", "#0080FF", "#7FFF00", "#FFD700"]
         idx = (presets.index(self.alt_color_hex) + 1) % len(presets) if self.alt_color_hex in presets else 0
         self.alt_color_hex = presets[idx]
         self.alt_color_btn.style.bgcolor = self.alt_color_hex
-        self.update()
+        self._safe_update()

@@ -9,24 +9,12 @@ from typing import Any, Callable, Dict, Optional
 
 import flet as ft
 
-from core.ass import AssDocument, format_ass_time
+from core.ass import AssDocument
 from core.measurements import load_measurements, save_measurements
 from core.project_bundle import ProjectBundle, export_project_zip, import_project_zip
 from core.render import RenderLayoutSettings, prepare_render_document, rgb_to_ass
 from core.sps import MeasurementTimeline
-from ui.theme import (
-    COLOR_BURST_BASE,
-    COLOR_ERROR,
-    COLOR_PRIMARY,
-    COLOR_SUCCESS,
-    SURFACE_CARD,
-    SURFACE_ELEVATED,
-    TEXT_MUTED,
-    TEXT_PRIMARY,
-    TEXT_SECONDARY,
-    ThemePalette,
-    get_current_palette,
-)
+from ui.theme import ThemePalette, get_current_palette
 
 
 class ExportView(ft.Container):
@@ -47,11 +35,11 @@ class ExportView(ft.Container):
         self.get_project_state = get_project_state
         self.on_project_loaded = on_project_loaded
 
-        # Pre-instantiated Services
-        self.project_save_picker = ft.FilePicker(on_result=self._on_project_save_result)
+        # Native FilePickers
+        self.project_save_picker = ft.FilePicker()
         self.project_open_picker = ft.FilePicker(on_result=self._on_project_open_result)
-        self.ass_save_picker = ft.FilePicker(on_result=self._on_ass_save_result)
-        self.meas_save_picker = ft.FilePicker(on_result=self._on_meas_save_result)
+        self.ass_save_picker = ft.FilePicker()
+        self.meas_save_picker = ft.FilePicker()
         self.meas_open_picker = ft.FilePicker(on_result=self._on_meas_open_result)
 
         self._build_controls()
@@ -65,13 +53,16 @@ class ExportView(ft.Container):
             self.meas_open_picker,
         ]
 
-    def apply_theme(self, pal: ThemePalette):
-        """Update colors dynamically when theme changes."""
-        self._build_controls()
+    def _safe_update(self):
         try:
             self.update()
         except RuntimeError:
             pass
+
+    def apply_theme(self, pal: ThemePalette):
+        """Update colors dynamically when theme changes."""
+        self._build_controls()
+        self._safe_update()
 
     def _show_snack(self, message: str, is_error: bool = False):
         if self.page:
@@ -86,7 +77,7 @@ class ExportView(ft.Container):
     def _build_controls(self):
         pal = get_current_palette()
 
-        # 1. Project Package (Import / Export .kproj) Card
+        # 1. Project Package (.kproj) Card
         self.project_status = ft.Text("Готов к экспорту проекта", size=12, color=pal.muted)
 
         self.export_project_btn = ft.FilledButton(
@@ -110,7 +101,7 @@ class ExportView(ft.Container):
                 shape=ft.RoundedRectangleBorder(radius=8),
                 padding=ft.Padding(14, 10, 14, 10),
             ),
-            on_click=self._on_import_project,
+            action=ft.PickFiles(self.project_open_picker, with_data=True),
         )
 
         project_card = ft.Container(
@@ -195,7 +186,7 @@ class ExportView(ft.Container):
                 shape=ft.RoundedRectangleBorder(radius=8),
                 padding=ft.Padding(12, 8, 12, 8),
             ),
-            on_click=self._on_import_meas_click,
+            action=ft.PickFiles(self.meas_open_picker, with_data=True),
         )
 
         meas_card = ft.Container(
@@ -217,7 +208,7 @@ class ExportView(ft.Container):
             border=ft.Border.all(1, pal.border),
         )
 
-        # 4. Video Render Settings & FFmpeg Generator Card (PC matched)
+        # 4. Video Render Settings Card
         self.profile_dropdown = ft.Dropdown(
             label="Профиль рендера",
             options=[
@@ -349,55 +340,49 @@ class ExportView(ft.Container):
             spacing=8,
         )
 
-    def _on_export_project(self, e):
+    async def _on_export_project(self, e):
         state = self.get_project_state() if self.get_project_state else {}
         doc = state.get("doc") or (self.get_document() if self.get_document else None)
+        pal = get_current_palette()
         if not doc:
             self.project_status.value = "Ошибка: субтитры не загружены"
-            self.project_status.color = get_current_palette().danger
-            self.update()
+            self.project_status.color = pal.danger
+            self._safe_update()
             return
-        self.project_save_picker.save_file(dialog_title="Сохранить проект караоке", file_name="karaoke_project.kproj")
 
-    def _on_project_save_result(self, result: ft.FilePickerResultEvent):
-        if result.path:
-            state = self.get_project_state() if self.get_project_state else {}
-            doc = state.get("doc") or (self.get_document() if self.get_document else None)
-            timeline = state.get("timeline") or (self.get_timeline() if self.get_timeline else None)
-            transcript = state.get("transcript", "")
-            burst_cfg = state.get("burst_settings", {})
-            audio_path = state.get("audio_path")
-            audio_bytes = state.get("audio_bytes")
-            audio_name = state.get("audio_name")
-            pal = get_current_palette()
-            try:
-                export_project_zip(
-                    result.path,
-                    project_name=os.path.splitext(os.path.basename(result.path))[0],
-                    doc=doc,
-                    timeline=timeline,
-                    transcript=transcript,
-                    burst_settings=burst_cfg,
-                    audio_path=audio_path,
-                    audio_bytes=audio_bytes,
-                    audio_filename=audio_name,
-                )
-                self.project_status.value = f"Проект сохранён: {os.path.basename(result.path)}"
-                self.project_status.color = pal.success
-                self.update()
-                self._show_snack(f"Проект сохранён: {os.path.basename(result.path)}")
-            except Exception as ex:
-                self.project_status.value = f"Ошибка сохранения проекта: {ex}"
-                self.project_status.color = pal.danger
-                self.update()
-                self._show_snack(f"Ошибка сохранения проекта: {ex}", is_error=True)
+        timeline = state.get("timeline") or (self.get_timeline() if self.get_timeline else None)
+        transcript = state.get("transcript", "")
+        burst_cfg = state.get("burst_settings", {})
+        audio_path = state.get("audio_path")
+        audio_bytes = state.get("audio_bytes")
+        audio_name = state.get("audio_name")
 
-    def _on_import_project(self, e):
-        self.project_open_picker.pick_files(
-            dialog_title="Импорт проекта караоке",
-            allowed_extensions=["kproj", "zip"],
-            with_data=True,
-        )
+        try:
+            zip_bytes = export_project_zip(
+                None,
+                project_name="karaoke_project",
+                doc=doc,
+                timeline=timeline,
+                transcript=transcript,
+                burst_settings=burst_cfg,
+                audio_path=audio_path,
+                audio_bytes=audio_bytes,
+                audio_filename=audio_name,
+            )
+            saved = await self.project_save_picker.save_file(
+                dialog_title="Сохранить проект караоке",
+                file_name="karaoke_project.kproj",
+                src_bytes=zip_bytes,
+            )
+            self.project_status.value = f"Проект сохранён: {os.path.basename(saved) if saved else 'успешно'}"
+            self.project_status.color = pal.success
+            self._safe_update()
+            self._show_snack("Проект .kproj успешно сохранён!")
+        except Exception as ex:
+            self.project_status.value = f"Ошибка сохранения: {ex}"
+            self.project_status.color = pal.danger
+            self._safe_update()
+            self._show_snack(f"Ошибка сохранения проекта: {ex}", is_error=True)
 
     def _on_project_open_result(self, result: ft.FilePickerResultEvent):
         pal = get_current_palette()
@@ -412,111 +397,103 @@ class ExportView(ft.Container):
                     raise ValueError("Файл не содержит данных")
                 self.project_status.value = f"Проект загружен: {bundle.name}"
                 self.project_status.color = pal.success
-                self.update()
+                self._safe_update()
                 if self.on_project_loaded:
                     self.on_project_loaded(bundle)
                 self._show_snack(f"Проект «{bundle.name}» загружен!")
             except Exception as ex:
                 self.project_status.value = f"Ошибка импорта проекта: {ex}"
                 self.project_status.color = pal.danger
-                self.update()
+                self._safe_update()
                 self._show_snack(f"Ошибка импорта проекта: {ex}", is_error=True)
 
-    def _on_export_ass(self, e):
+    async def _on_export_ass(self, e):
         doc = self.get_document() if self.get_document else None
         pal = get_current_palette()
         if not doc:
             self.ass_status.value = "Ошибка: субтитры не загружены"
             self.ass_status.color = pal.danger
-            self.update()
+            self._safe_update()
             return
-        self.ass_save_picker.save_file(dialog_title="Сохранить .ass файл", file_name="karaoke_burst_export.ass")
 
-    def _on_ass_save_result(self, result: ft.FilePickerResultEvent):
-        pal = get_current_palette()
-        if result.path:
-            doc = self.get_document() if self.get_document else None
-            if not doc:
-                return
-            state = self.get_project_state() if self.get_project_state else {}
-            b_cfg = state.get("burst_settings", {})
-            timeline = self.get_timeline() if self.get_timeline else None
-
-            # Render layout settings matching user UI configuration
-            settings = RenderLayoutSettings(
-                burst_color_mode=self.color_mode_dropdown.value or b_cfg.get("mode", "dynamic"),
-                burst_base_color=rgb_to_ass(b_cfg.get("base_color", "#FF0000")),
-                burst_alt_color=rgb_to_ass(b_cfg.get("alt_color", "#FF8000")),
-                burst_pulse_hz=float(b_cfg.get("pulse_hz", 2.0)),
-                text_case=self.text_case_dropdown.value or "as_is",
-            )
-            try:
-                render_doc = prepare_render_document(doc, settings)
-
-                # If acoustic SPS overrides are selected, adjust syllable durations
-                if self.include_sps_timing_switch.value and timeline and timeline.changed():
-                    meas_map = {s.id: s for s in timeline.syllables if s.measurement_changed}
-                    for syl in render_doc.karaoke_syllables():
-                        if syl.id in meas_map:
-                            item = meas_map[syl.id]
-                            new_cs = max(1, int(round((item.effective_end - item.effective_start) * 100.0)))
-                            # Replace duration in event line
-                            ev = next((e for e in render_doc.events() if e.line_index == syl.event_line_index), None)
-                            if ev:
-                                tag_val = f"\\{syl.tag_type.value}{new_cs}"
-                                ev.text = ev.text[:syl.tag_value_start] + tag_val + ev.text[syl.tag_value_end:]
-                                ev.commit()
-
-                out_content = render_doc.dumps()
-                with open(result.path, "w", encoding="utf-8") as f:
-                    f.write(out_content)
-                self.ass_status.value = f"Сохранено: {os.path.basename(result.path)}"
-                self.ass_status.color = pal.success
-                self.update()
-                self._show_snack(f"Субтитры сохранены: {os.path.basename(result.path)}")
-            except Exception as ex:
-                self.ass_status.value = f"Ошибка: {ex}"
-                self.ass_status.color = pal.danger
-                self.update()
-                self._show_snack(f"Ошибка сохранения ASS: {ex}", is_error=True)
-
-    def _on_export_meas_click(self, e):
+        state = self.get_project_state() if self.get_project_state else {}
+        b_cfg = state.get("burst_settings", {})
         timeline = self.get_timeline() if self.get_timeline else None
+
+        settings = RenderLayoutSettings(
+            burst_color_mode=self.color_mode_dropdown.value or b_cfg.get("mode", "dynamic"),
+            burst_base_color=rgb_to_ass(b_cfg.get("base_color", "#FF0000")),
+            burst_alt_color=rgb_to_ass(b_cfg.get("alt_color", "#FF8000")),
+            burst_pulse_hz=float(b_cfg.get("pulse_hz", 2.0)),
+            text_case=self.text_case_dropdown.value or "as_is",
+        )
+        try:
+            render_doc = prepare_render_document(doc, settings)
+
+            if self.include_sps_timing_switch.value and timeline and timeline.changed():
+                meas_map = {s.id: s for s in timeline.syllables if s.measurement_changed}
+                for syl in render_doc.karaoke_syllables():
+                    if syl.id in meas_map:
+                        item = meas_map[syl.id]
+                        new_cs = max(1, int(round((item.effective_end - item.effective_start) * 100.0)))
+                        ev = next((ev_item for ev_item in render_doc.events() if ev_item.line_index == syl.event_line_index), None)
+                        if ev:
+                            tag_val = f"\\{syl.tag_type.value}{new_cs}"
+                            ev.text = ev.text[:syl.tag_value_start] + tag_val + ev.text[syl.tag_value_end:]
+                            ev.commit()
+
+            out_bytes = render_doc.dumps().encode("utf-8")
+            saved = await self.ass_save_picker.save_file(
+                dialog_title="Сохранить .ass файл",
+                file_name="karaoke_burst_export.ass",
+                src_bytes=out_bytes,
+            )
+            self.ass_status.value = f"Сохранено: {os.path.basename(saved) if saved else 'успешно'}"
+            self.ass_status.color = pal.success
+            self._safe_update()
+            self._show_snack("Субтитры ASS успешно сохранены!")
+        except Exception as ex:
+            self.ass_status.value = f"Ошибка: {ex}"
+            self.ass_status.color = pal.danger
+            self._safe_update()
+            self._show_snack(f"Ошибка сохранения ASS: {ex}", is_error=True)
+
+    async def _on_export_meas_click(self, e):
+        timeline = self.get_timeline() if self.get_timeline else None
+        pal = get_current_palette()
         if not timeline or not timeline.changed():
             self.meas_status.value = "Нет измененных замеров"
-            self.update()
+            self._safe_update()
             self._show_snack("Нет измененных замеров для экспорта")
             return
-        self.meas_save_picker.save_file(dialog_title="Экспорт замеров", file_name="sps_measurements.json")
 
-    def _on_meas_save_result(self, result: ft.FilePickerResultEvent):
-        timeline = self.get_timeline() if self.get_timeline else None
-        pal = get_current_palette()
-        if result.path and timeline:
-            try:
-                save_measurements(result.path, timeline)
-                self.meas_status.value = f"Сохранено: {os.path.basename(result.path)}"
-                self.meas_status.color = pal.success
-                self.update()
-                self._show_snack(f"Замеры сохранены: {os.path.basename(result.path)}")
-            except Exception as ex:
-                self.meas_status.value = f"Ошибка: {ex}"
-                self.meas_status.color = pal.danger
-                self.update()
-                self._show_snack(f"Ошибка: {ex}", is_error=True)
-
-    def _on_import_meas_click(self, e):
-        timeline = self.get_timeline() if self.get_timeline else None
-        if not timeline:
-            self.meas_status.value = "Сначала загрузите субтитры"
-            self.update()
-            self._show_snack("Сначала загрузите субтитры", is_error=True)
-            return
-        self.meas_open_picker.pick_files(
-            dialog_title="Импорт замеров",
-            allowed_extensions=["json"],
-            with_data=True,
-        )
+        meas_data = {
+            "version": 1,
+            "measurements": [
+                {
+                    "syllable_id": s.id,
+                    "measured_start": s.effective_start,
+                    "measured_end": s.effective_end,
+                }
+                for s in timeline.changed()
+            ],
+        }
+        meas_bytes = json.dumps(meas_data, ensure_ascii=False, indent=2).encode("utf-8")
+        try:
+            saved = await self.meas_save_picker.save_file(
+                dialog_title="Экспорт замеров",
+                file_name="sps_measurements.json",
+                src_bytes=meas_bytes,
+            )
+            self.meas_status.value = f"Сохранено: {os.path.basename(saved) if saved else 'успешно'}"
+            self.meas_status.color = pal.success
+            self._safe_update()
+            self._show_snack("Замеры SPS сохранены!")
+        except Exception as ex:
+            self.meas_status.value = f"Ошибка: {ex}"
+            self.meas_status.color = pal.danger
+            self._safe_update()
+            self._show_snack(f"Ошибка сохранения замеров: {ex}", is_error=True)
 
     def _on_meas_open_result(self, result: ft.FilePickerResultEvent):
         timeline = self.get_timeline() if self.get_timeline else None
@@ -540,12 +517,12 @@ class ExportView(ft.Container):
                     load_measurements(f.path, timeline)
                 self.meas_status.value = f"Загружено: {f.name}"
                 self.meas_status.color = pal.success
-                self.update()
+                self._safe_update()
                 self._show_snack(f"Замеры загружены: {f.name}")
             except Exception as ex:
                 self.meas_status.value = f"Ошибка: {ex}"
                 self.meas_status.color = pal.danger
-                self.update()
+                self._safe_update()
                 self._show_snack(f"Ошибка загрузки замеров: {ex}", is_error=True)
 
     def _on_copy_ffmpeg_cmd(self, e):
