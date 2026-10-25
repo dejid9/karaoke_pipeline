@@ -1,9 +1,8 @@
-"""Precise SPS (Exact Perceptual Measurements & Burst Analyzer) View."""
+"""Precise SPS (Exact Perceptual Measurements & Burst Analyzer) View with PC-parity Ergonomics."""
 
 from __future__ import annotations
 
 import json
-import os
 from typing import Callable, Dict, List, Optional
 
 import flet as ft
@@ -14,25 +13,26 @@ from core.measurements import (
     MeasurementRecord,
     apply_measurements,
     load_measurements,
-    save_measurements,
 )
 from core.sps import BurstCandidate, MeasurementTimeline, detect_bursts
 from ui.theme import ThemePalette, get_current_palette
 
 
 class SPSView(ft.Container):
-    """View providing exact perceptual syllable timing measurements and burst detection."""
+    """View providing exact perceptual syllable timing measurements and burst detection matching PC workbench."""
 
     def __init__(
         self,
         on_document_changed: Optional[Callable[[AssDocument], None]] = None,
         on_measurements_changed: Optional[Callable[[MeasurementTimeline], None]] = None,
+        on_return_to_karaoke: Optional[Callable[[str], None]] = None,
     ):
         super().__init__()
         self.expand = True
-        self.padding = 12
+        self.padding = 10
         self.on_document_changed = on_document_changed
         self.on_measurements_changed = on_measurements_changed
+        self.on_return_to_karaoke = on_return_to_karaoke
 
         self.document: Optional[AssDocument] = None
         self.timeline: Optional[MeasurementTimeline] = None
@@ -40,6 +40,10 @@ class SPSView(ft.Container):
         self.selected_burst: Optional[BurstCandidate] = None
         self.selected_syllable_id: Optional[str] = None
         self.min_peak_sps: float = 6.0
+
+        # Measurement Undo/Redo history
+        self._meas_undo_stack: list[dict[str, tuple[float, float]]] = []
+        self._meas_redo_stack: list[dict[str, tuple[float, float]]] = []
 
         # Native FilePickers
         self.meas_save_picker = ft.FilePicker()
@@ -69,6 +73,8 @@ class SPSView(ft.Container):
             self.timeline = timeline
         else:
             self.timeline = MeasurementTimeline.from_karaoke(doc.karaoke_syllables())
+        self._meas_undo_stack.clear()
+        self._meas_redo_stack.clear()
         self._recalculate_bursts()
         self._refresh_ui()
 
@@ -80,6 +86,48 @@ class SPSView(ft.Container):
             if matching_burst:
                 self.selected_burst = matching_burst
         self._refresh_ui()
+
+    def _snapshot_measurements(self) -> dict[str, tuple[float, float]]:
+        if not self.timeline:
+            return {}
+        return {s.id: (s.effective_start, s.effective_end) for s in self.timeline.changed()}
+
+    def _push_meas_undo(self):
+        self._meas_undo_stack.append(self._snapshot_measurements())
+        if len(self._meas_undo_stack) > 50:
+            self._meas_undo_stack.pop(0)
+        self._meas_redo_stack.clear()
+
+    def undo_measurement(self, e=None):
+        if not self._meas_undo_stack or not self.timeline:
+            self._show_snack("Нечего отменять (история замеров пуста)")
+            return
+        self._meas_redo_stack.append(self._snapshot_measurements())
+        target = self._meas_undo_stack.pop()
+        self._apply_measurement_snapshot(target)
+        self._show_snack("Замер отменен (Undo ↶)")
+
+    def redo_measurement(self, e=None):
+        if not self._meas_redo_stack or not self.timeline:
+            self._show_snack("Нечего повторять (история замеров пуста)")
+            return
+        self._meas_undo_stack.append(self._snapshot_measurements())
+        target = self._meas_redo_stack.pop()
+        self._apply_measurement_snapshot(target)
+        self._show_snack("Замер повторен (Redo ↷)")
+
+    def _apply_measurement_snapshot(self, snapshot: dict[str, tuple[float, float]]):
+        if not self.timeline:
+            return
+        for s in list(self.timeline.changed()):
+            if s.id not in snapshot:
+                self.timeline.clear_measurement(s.id)
+        for sid, (st, en) in snapshot.items():
+            self.timeline.set_measurement(sid, st, en)
+        self._recalculate_bursts()
+        self._refresh_ui()
+        if self.on_measurements_changed:
+            self.on_measurements_changed(self.timeline)
 
     def _show_snack(self, message: str, is_error: bool = False):
         if self.page:
@@ -94,21 +142,39 @@ class SPSView(ft.Container):
     def _build_controls(self):
         pal = get_current_palette()
 
-        # 1. Top Header & Stats
-        self.summary_badge = ft.Text("Материал не загружен", size=13, color=pal.muted)
-        self.fastest_burst_badge = ft.Text("Быстрейший бёрст: —", size=13, weight=ft.FontWeight.BOLD, color=pal.warning)
+        # 1. Top Header & Stats matching PC Subheader
+        self.summary_badge = ft.Text("Материал не загружен", size=12, color=pal.muted)
+        self.fastest_burst_badge = ft.Text("Быстрейший бёрст: —", size=12, weight=ft.FontWeight.BOLD, color=pal.warning)
+
+        self.back_to_editor_btn = ft.FilledButton(
+            "← В Караоке",
+            icon=ft.Icons.ARROW_BACK,
+            style=ft.ButtonStyle(
+                color=pal.accent_fg,
+                bgcolor=pal.accent,
+                shape=ft.RoundedRectangleBorder(radius=8),
+                padding=ft.Padding(10, 6, 10, 6),
+            ),
+            on_click=lambda e: self._return_to_karaoke(),
+        )
 
         header_card = ft.Container(
-            content=ft.Column(
+            content=ft.Row(
                 [
-                    ft.Text("Точный SPS и акустические замеры", size=18, weight=ft.FontWeight.BOLD, color=pal.fg),
-                    ft.Text("Точная подгонка границ слогов и автоматический расчет скорости (SPS)", size=12, color=pal.muted),
-                    ft.Row([self.summary_badge, self.fastest_burst_badge], wrap=True, spacing=10),
+                    ft.Column(
+                        [
+                            ft.Text("Точный SPS (Exact Perceptual)", size=17, weight=ft.FontWeight.BOLD, color=pal.fg),
+                            ft.Row([self.summary_badge, self.fastest_burst_badge], wrap=True, spacing=6),
+                        ],
+                        spacing=1,
+                        expand=True,
+                    ),
+                    self.back_to_editor_btn,
                 ],
-                spacing=4,
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             ),
             bgcolor=pal.panel,
-            padding=12,
+            padding=10,
             border_radius=10,
             border=ft.Border.all(1, pal.border),
         )
@@ -117,7 +183,7 @@ class SPSView(ft.Container):
         self.sps_slider = ft.Slider(
             min=2.0,
             max=16.0,
-            divisions=14,
+            divisions=28,
             value=self.min_peak_sps,
             label="{value} SPS",
             on_change=self._on_slider_change,
@@ -131,6 +197,7 @@ class SPSView(ft.Container):
                 color=pal.accent_fg,
                 bgcolor=pal.danger,
                 shape=ft.RoundedRectangleBorder(radius=8),
+                padding=ft.Padding(10, 6, 10, 6),
             ),
             on_click=self._on_select_fastest,
         )
@@ -142,6 +209,7 @@ class SPSView(ft.Container):
                 color=pal.fg,
                 bgcolor=pal.raised,
                 shape=ft.RoundedRectangleBorder(radius=8),
+                padding=ft.Padding(10, 6, 10, 6),
             ),
             on_click=self._on_colour_selected,
         )
@@ -153,6 +221,7 @@ class SPSView(ft.Container):
                 color=pal.muted,
                 bgcolor=pal.raised,
                 shape=ft.RoundedRectangleBorder(radius=8),
+                padding=ft.Padding(10, 6, 10, 6),
             ),
             on_click=self._on_uncolour_selected,
         )
@@ -183,20 +252,20 @@ class SPSView(ft.Container):
                             self.export_meas_btn,
                         ],
                         wrap=True,
-                        spacing=6,
+                        spacing=4,
                     ),
                 ],
-                spacing=8,
+                spacing=6,
             ),
             bgcolor=pal.panel,
-            padding=12,
+            padding=10,
             border_radius=10,
             border=ft.Border.all(1, pal.border),
         )
 
         # 3. Syllable Perceptual Measurement Inspector & Editor
         self.meas_syllable_label = ft.Text("Выберите слог для точного замера", size=14, weight=ft.FontWeight.BOLD, color=pal.fg)
-        self.meas_info_label = ft.Text("ASS: — | Измерение: —", size=12, color=pal.muted)
+        self.meas_info_label = ft.Text("ASS: — | Измерение: —", size=11, color=pal.muted)
 
         self.meas_start_field = ft.TextField(
             label="Start (сек)",
@@ -215,13 +284,21 @@ class SPSView(ft.Container):
             on_submit=self._on_meas_apply,
         )
 
-        self.meas_apply_btn = ft.FilledButton("Применить", style=ft.ButtonStyle(bgcolor=pal.accent, color=pal.accent_fg), on_click=self._on_meas_apply)
-        self.meas_reset_btn = ft.FilledButton("Сбросить", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg), on_click=self._on_meas_reset)
+        self.meas_apply_btn = ft.FilledButton("Применить", style=ft.ButtonStyle(bgcolor=pal.accent, color=pal.accent_fg, padding=ft.Padding(10, 6, 10, 6)), on_click=self._on_meas_apply)
+        self.meas_reset_btn = ft.FilledButton("Сбросить", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(10, 6, 10, 6)), on_click=self._on_meas_reset)
+        self.meas_undo_btn = ft.FilledButton("↶", tooltip="Отменить замер", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=self.undo_measurement)
+        self.meas_redo_btn = ft.FilledButton("↷", tooltip="Повторить замер", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=self.redo_measurement)
 
-        self.nudge_start_minus = ft.FilledButton("-10ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg), on_click=lambda e: self._nudge("start", -0.01))
-        self.nudge_start_plus = ft.FilledButton("+10ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg), on_click=lambda e: self._nudge("start", 0.01))
-        self.nudge_end_minus = ft.FilledButton("-10ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg), on_click=lambda e: self._nudge("end", -0.01))
-        self.nudge_end_plus = ft.FilledButton("+10ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg), on_click=lambda e: self._nudge("end", 0.01))
+        self.nudge_start_minus = ft.FilledButton("-10ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: self._nudge("start", -0.01))
+        self.nudge_start_plus = ft.FilledButton("+10ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: self._nudge("start", 0.01))
+        self.nudge_end_minus = ft.FilledButton("-10ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: self._nudge("end", -0.01))
+        self.nudge_end_plus = ft.FilledButton("+10ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: self._nudge("end", 0.01))
+
+        sps_hint = ft.Text(
+            "Start и End независимы: End можно поставить раньше Start (отрицательная длительность для опережающего пения).",
+            size=11,
+            color=pal.muted,
+        )
 
         meas_editor_card = ft.Container(
             content=ft.Column(
@@ -230,7 +307,7 @@ class SPSView(ft.Container):
                     self.meas_info_label,
                     ft.Row(
                         [
-                            ft.Text("Начало:", size=12, color=pal.muted),
+                            ft.Text("Start:", size=12, color=pal.muted),
                             self.nudge_start_minus,
                             self.meas_start_field,
                             self.nudge_start_plus,
@@ -241,7 +318,7 @@ class SPSView(ft.Container):
                     ),
                     ft.Row(
                         [
-                            ft.Text("Конец: ", size=12, color=pal.muted),
+                            ft.Text("End: ", size=12, color=pal.muted),
                             self.nudge_end_minus,
                             self.meas_end_field,
                             self.nudge_end_plus,
@@ -250,12 +327,21 @@ class SPSView(ft.Container):
                         spacing=4,
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
-                    ft.Row([self.meas_apply_btn, self.meas_reset_btn], spacing=8),
+                    ft.Row(
+                        [
+                            self.meas_apply_btn,
+                            self.meas_reset_btn,
+                            self.meas_undo_btn,
+                            self.meas_redo_btn,
+                        ],
+                        spacing=6,
+                    ),
+                    sps_hint,
                 ],
-                spacing=8,
+                spacing=6,
             ),
             bgcolor=pal.panel,
-            padding=12,
+            padding=10,
             border_radius=10,
             border=ft.Border.all(1, pal.border),
         )
@@ -265,30 +351,30 @@ class SPSView(ft.Container):
         self.syllable_chips_container = ft.Container(
             content=ft.Column(
                 [
-                    ft.Text("Слоги выбранного фрагмента (нажмите для замера)", size=13, weight=ft.FontWeight.BOLD, color=pal.fg),
+                    ft.Text("Слоги выбранного бёрста (нажмите для точного замера)", size=13, weight=ft.FontWeight.BOLD, color=pal.fg),
                     self.syllable_chips_row,
                 ],
-                spacing=8,
+                spacing=6,
             ),
             bgcolor=pal.panel,
-            padding=12,
+            padding=10,
             border_radius=10,
             border=ft.Border.all(1, pal.border),
         )
 
         # 5. Burst Candidate Cards List
-        self.burst_list_column = ft.Column(spacing=8)
+        self.burst_list_column = ft.Column(spacing=6)
 
         self.burst_list_container = ft.Container(
             content=ft.Column(
                 [
-                    ft.Text("Обнаруженные бёрсты", size=14, weight=ft.FontWeight.BOLD, color=pal.fg),
+                    ft.Text("Обнаруженные бёрсты (отсортированы по времени)", size=14, weight=ft.FontWeight.BOLD, color=pal.fg),
                     self.burst_list_column,
                 ],
-                spacing=8,
+                spacing=6,
             ),
             bgcolor=pal.panel,
-            padding=12,
+            padding=10,
             border_radius=10,
             border=ft.Border.all(1, pal.border),
         )
@@ -296,17 +382,18 @@ class SPSView(ft.Container):
         self.content = ft.ListView(
             controls=[
                 header_card,
-                ft.Divider(height=6, color=ft.Colors.TRANSPARENT),
                 controls_card,
-                ft.Divider(height=6, color=ft.Colors.TRANSPARENT),
                 meas_editor_card,
-                ft.Divider(height=6, color=ft.Colors.TRANSPARENT),
                 self.syllable_chips_container,
-                ft.Divider(height=6, color=ft.Colors.TRANSPARENT),
                 self.burst_list_container,
             ],
-            spacing=8,
+            spacing=6,
         )
+
+    def _return_to_karaoke(self):
+        target_id = self.selected_syllable_id or ""
+        if self.on_return_to_karaoke:
+            self.on_return_to_karaoke(target_id)
 
     def _recalculate_bursts(self):
         if not self.timeline or not self.timeline.syllables:
@@ -398,7 +485,7 @@ class SPSView(ft.Container):
             return
 
         syl_lookup = {s.id: s for s in self.timeline.syllables}
-        display_ids = self.selected_burst.syllable_ids if self.selected_burst else [s.id for s in self.timeline.syllables[:20]]
+        display_ids = self.selected_burst.syllable_ids if self.selected_burst else [s.id for s in self.timeline.syllables[:24]]
 
         for sid in display_ids:
             s = syl_lookup.get(sid)
@@ -442,7 +529,7 @@ class SPSView(ft.Container):
         pal = get_current_palette()
         if not self.timeline or not self.selected_syllable_id:
             self.meas_syllable_label.value = "Слог не выбран"
-            self.meas_info_label.value = "ASS: — | Измерение: —"
+            self.meas_info_label.value = "ASS: — | Замер: —"
             self.meas_start_field.value = ""
             self.meas_end_field.value = ""
             return
@@ -452,9 +539,18 @@ class SPSView(ft.Container):
         if not syl:
             return
 
+        ass_dur = int(round((syl.end - syl.start) * 1000))
+        eff_dur = int(round((syl.effective_end - syl.effective_start) * 1000))
+        delta_start = int(round((syl.effective_start - syl.start) * 1000))
+        delta_end = int(round((syl.effective_end - syl.end) * 1000))
+
         self.meas_syllable_label.value = f"Слог «{syl.text}» ({syl.id})"
         status = " (Точный замер применён ✓)" if syl.measurement_changed else " (По умолчанию из ASS)"
-        self.meas_info_label.value = f"ASS: {syl.start:.3f}–{syl.end:.3f}с | Эффективно: {syl.effective_start:.3f}–{syl.effective_end:.3f}с{status}"
+        self.meas_info_label.value = (
+            f"ASS: {syl.start:.3f}–{syl.end:.3f}с ({ass_dur}мс) | "
+            f"Замер: {syl.effective_start:.3f}–{syl.effective_end:.3f}с ({eff_dur}мс | "
+            f"Δstart {delta_start:+d}мс, Δend {delta_end:+d}мс){status}"
+        )
         self.meas_start_field.value = f"{syl.effective_start:.3f}"
         self.meas_end_field.value = f"{syl.effective_end:.3f}"
 
@@ -464,18 +560,20 @@ class SPSView(ft.Container):
         try:
             st = float(self.meas_start_field.value)
             en = float(self.meas_end_field.value)
+            self._push_meas_undo()
             self.timeline.set_measurement(self.selected_syllable_id, st, en)
             self._recalculate_bursts()
             self._refresh_ui()
             if self.on_measurements_changed:
                 self.on_measurements_changed(self.timeline)
-            self._show_snack("Границы слога обновлены")
-        except Exception:
-            pass
+            self._show_snack("Границы замера сохранены")
+        except Exception as ex:
+            self._show_snack(f"Некорректное значение: {ex}", is_error=True)
 
     def _on_meas_reset(self, e):
         if not self.timeline or not self.selected_syllable_id:
             return
+        self._push_meas_undo()
         self.timeline.clear_measurement(self.selected_syllable_id)
         self._recalculate_bursts()
         self._refresh_ui()
@@ -491,6 +589,7 @@ class SPSView(ft.Container):
             s = lookup.get(self.selected_syllable_id)
             if not s:
                 return
+            self._push_meas_undo()
             st = s.effective_start + (delta if field_type == "start" else 0.0)
             en = s.effective_end + (delta if field_type == "end" else 0.0)
             self.timeline.set_measurement(self.selected_syllable_id, st, en)
@@ -509,30 +608,34 @@ class SPSView(ft.Container):
 
     def _on_select_fastest(self, e):
         if not self.bursts:
+            self._show_snack("Бёрстов не найдено при текущем пороге")
             return
         fastest = max(self.bursts, key=lambda b: b.peak_sps)
         self.selected_burst = fastest
         if fastest.syllable_ids:
             self.selected_syllable_id = fastest.syllable_ids[0]
         self._refresh_ui()
+        self._show_snack(f"Выбран быстрейший бёрст ({fastest.peak_sps:.1f} SPS)")
 
     def _on_colour_selected(self, e):
         if not self.document or not self.selected_burst:
+            self._show_snack("Сначала выберите бёрст")
             return
         colour_burst(self.document, list(self.selected_burst.syllable_ids))
         if self.on_document_changed:
             self.on_document_changed(self.document)
         self._refresh_ui()
-        self._show_snack("Бёрст размечен цветом 🔥")
+        self._show_snack("Бёрст размечен красным переливом 🔥")
 
     def _on_uncolour_selected(self, e):
         if not self.document or not self.selected_burst:
+            self._show_snack("Сначала выберите бёрст")
             return
         uncolour_burst(self.document, list(self.selected_burst.syllable_ids))
         if self.on_document_changed:
             self.on_document_changed(self.document)
         self._refresh_ui()
-        self._show_snack("Разметка цвета снята")
+        self._show_snack("Разметка бёрста снята")
 
     async def _on_export_measurements(self, e):
         pal = get_current_palette()
@@ -579,6 +682,8 @@ class SPSView(ft.Container):
                     apply_measurements(records, self.timeline)
                 elif f.path:
                     load_measurements(f.path, self.timeline)
+                self._meas_undo_stack.clear()
+                self._meas_redo_stack.clear()
                 self._recalculate_bursts()
                 self._refresh_ui()
                 if self.on_measurements_changed:

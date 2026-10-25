@@ -1,4 +1,4 @@
-"""Mobile-optimized Karaoke Syllable & Burst Editor with Touch Ergonomics and Native File Picking."""
+"""Mobile-optimized Karaoke Syllable & Burst Editor with PC-parity Ergonomics."""
 
 from __future__ import annotations
 
@@ -6,15 +6,17 @@ from typing import Callable, Optional
 
 import flet as ft
 
-from core.ass import AssDocument, KaraokeSyllable, format_ass_time
+from core.ass import AssDocument, KaraokeSyllable, KaraokeTagType, format_ass_time
 from core.editor import (
     colour_burst,
     delete_syllable,
     insert_after,
     merge_syllables,
     nudge_syllable_duration,
+    redistribute_boundary,
     set_syllable_romanization,
     set_syllable_text,
+    set_tag_type,
     split_syllable,
     uncolour_burst,
 )
@@ -39,6 +41,10 @@ class EditorView(ft.Container):
         self.selected_syllable_id: Optional[str] = None
         self.ass_picker = ft.FilePicker(on_result=self._on_ass_picked)
 
+        # Undo/Redo history stack
+        self._undo_stack: list[str] = []
+        self._redo_stack: list[str] = []
+
         self._build_controls()
 
     def get_services(self) -> list[ft.Service]:
@@ -56,11 +62,45 @@ class EditorView(ft.Container):
         self._refresh_ui()
         self._safe_update()
 
+    def _push_undo(self):
+        """Record current document state into undo history before mutation."""
+        if self.document:
+            self._undo_stack.append(self.document.dumps())
+            if len(self._undo_stack) > 50:
+                self._undo_stack.pop(0)
+            self._redo_stack.clear()
+
+    def undo(self, e=None):
+        if not self._undo_stack or not self.document:
+            self._show_snack("Нечего отменять (история пуста)")
+            return
+        self._redo_stack.append(self.document.dumps())
+        prev_text = self._undo_stack.pop()
+        self.document = AssDocument.from_text(prev_text)
+        self._refresh_ui()
+        if self.on_document_changed:
+            self.on_document_changed(self.document)
+        self._show_snack("Действие отменено (Undo ↶)")
+
+    def redo(self, e=None):
+        if not self._redo_stack or not self.document:
+            self._show_snack("Нечего повторять (история пуста)")
+            return
+        self._undo_stack.append(self.document.dumps())
+        next_text = self._redo_stack.pop()
+        self.document = AssDocument.from_text(next_text)
+        self._refresh_ui()
+        if self.on_document_changed:
+            self.on_document_changed(self.document)
+        self._show_snack("Действие повторено (Redo ↷)")
+
     def load_ass_text(self, ass_text: str):
         """Load an ASS script into the editor."""
         try:
             self.document = AssDocument.from_text(ass_text)
             self.selected_syllable_id = None
+            self._undo_stack.clear()
+            self._redo_stack.clear()
             self._refresh_ui()
             if self.on_document_changed:
                 self.on_document_changed(self.document)
@@ -81,7 +121,7 @@ class EditorView(ft.Container):
         pal = get_current_palette()
         self.stats_text = ft.Text("Слогов: 0 | Бёрст: 0", size=12, color=pal.muted)
 
-        # Native FilePicker Action for reliable mobile triggering
+        # Native FilePicker Action
         self.open_file_btn = ft.IconButton(
             icon=ft.Icons.FOLDER_OPEN,
             tooltip="Открыть файл субтитров (.ass)",
@@ -89,32 +129,55 @@ class EditorView(ft.Container):
             action=ft.PickFiles(self.ass_picker, with_data=True),
         )
 
-        self.romanize_btn = ft.FilledButton(
-            "Ромадзи",
-            icon=ft.Icons.TRANSLATE,
-            style=ft.ButtonStyle(
-                color=pal.fg,
-                bgcolor=pal.raised,
-                shape=ft.RoundedRectangleBorder(radius=8),
-                padding=ft.Padding(12, 8, 12, 8),
-            ),
-            on_click=self._on_romanize,
+        self.undo_btn = ft.IconButton(
+            icon=ft.Icons.UNDO,
+            tooltip="Отменить (Undo)",
+            icon_size=20,
+            icon_color=pal.fg,
+            on_click=self.undo,
+        )
+        self.redo_btn = ft.IconButton(
+            icon=ft.Icons.REDO,
+            tooltip="Повторить (Redo)",
+            icon_size=20,
+            icon_color=pal.fg,
+            on_click=self.redo,
         )
 
-        top_bar = ft.Row(
-            [
-                ft.Column(
-                    [
-                        ft.Text("Караоке редактор", size=18, weight=ft.FontWeight.BOLD, color=pal.fg),
-                        self.stats_text,
-                    ],
-                    spacing=2,
-                    expand=True,
-                ),
-                self.romanize_btn,
-                self.open_file_btn,
-            ],
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+        self.sps_jump_top_btn = ft.FilledButton(
+            "→ В точный SPS",
+            icon=ft.Icons.SPEED,
+            style=ft.ButtonStyle(
+                color=pal.accent_fg,
+                bgcolor=pal.accent,
+                shape=ft.RoundedRectangleBorder(radius=8),
+                padding=ft.Padding(10, 6, 10, 6),
+            ),
+            on_click=lambda e: self._transfer_to_sps(),
+        )
+
+        top_bar = ft.Container(
+            content=ft.Row(
+                [
+                    ft.Column(
+                        [
+                            ft.Text("Караоке редактор", size=17, weight=ft.FontWeight.BOLD, color=pal.fg),
+                            self.stats_text,
+                        ],
+                        spacing=1,
+                        expand=True,
+                    ),
+                    self.undo_btn,
+                    self.redo_btn,
+                    self.open_file_btn,
+                    self.sps_jump_top_btn,
+                ],
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            ),
+            bgcolor=pal.panel,
+            padding=ft.Padding(10, 6, 10, 6),
+            border_radius=10,
+            border=ft.Border.all(1, pal.border),
         )
 
         self.syllables_list = ft.ListView(expand=True, spacing=8)
@@ -138,13 +201,21 @@ class EditorView(ft.Container):
         self.content = ft.Column(
             [
                 top_bar,
-                ft.Divider(height=6, color=ft.Colors.TRANSPARENT),
                 ft.Container(content=self.syllables_list, expand=True),
                 self.docked_toolbar,
             ],
             expand=True,
-            spacing=4,
+            spacing=6,
         )
+
+    def _transfer_to_sps(self):
+        target_id = self.selected_syllable_id
+        if not target_id and self.document:
+            first_syl = next(self.document.karaoke_syllables(), None)
+            if first_syl:
+                target_id = first_syl.id
+        if self.on_jump_to_sps:
+            self.on_jump_to_sps(target_id or "")
 
     def _refresh_ui(self):
         pal = get_current_palette()
@@ -192,7 +263,7 @@ class EditorView(ft.Container):
     def _build_line_card(self, ev, syls: list[KaraokeSyllable]) -> ft.Container:
         pal = get_current_palette()
         time_badge = ft.Text(
-            f"{format_ass_time(ev.start)} ➔ {format_ass_time(ev.end)}",
+            f"Строка {ev.line_index} | {format_ass_time(ev.start)} ➔ {format_ass_time(ev.end)} ({int((ev.end - ev.start)*1000)}мс)",
             size=11,
             color=pal.muted,
         )
@@ -219,6 +290,7 @@ class EditorView(ft.Container):
         is_burst = s.burst_marked
         text = s.visible_text.strip() or s.raw_text.strip() or "..."
         dur_ms = s.duration_cs * 10
+        tag_val = s.tag_type.value
 
         if is_selected:
             chip_bg = pal.raised
@@ -236,6 +308,7 @@ class EditorView(ft.Container):
         def _on_chip_tap(e):
             if self.selected_syllable_id == s.id:
                 # Toggle burst if already selected
+                self._push_undo()
                 if is_burst:
                     uncolour_burst(self.document, [s.id])
                 else:
@@ -246,11 +319,12 @@ class EditorView(ft.Container):
                 self.selected_syllable_id = s.id
             self._refresh_ui()
 
+        tag_badge = f"\\{tag_val}" if tag_val != "k" else ""
         return ft.Container(
             content=ft.Row(
                 [
                     ft.Text(f"{'🔥 ' if is_burst else ''}{text}", size=13, weight=ft.FontWeight.BOLD, color=chip_fg),
-                    ft.Text(f"{dur_ms}ms", size=10, color=chip_fg if (is_burst or is_selected) else pal.muted),
+                    ft.Text(f"{dur_ms}ms{(' ' + tag_badge) if tag_badge else ''}", size=10, color=chip_fg if (is_burst or is_selected) else pal.muted),
                 ],
                 spacing=3,
                 tight=True,
@@ -264,15 +338,25 @@ class EditorView(ft.Container):
         )
 
     def _update_docked_toolbar(self, s: KaraokeSyllable, all_syllables: list[KaraokeSyllable]):
-        """Render the touch controls for the active selected syllable."""
+        """Render touch controls for the active selected syllable matching PC functionality."""
         pal = get_current_palette()
         is_burst = s.burst_marked
         text = s.visible_text.strip() or s.raw_text.strip() or "..."
         dur_ms = s.duration_cs * 10
         idx = next((i for i, item in enumerate(all_syllables) if item.id == s.id), -1)
 
+        # Find adjacent syllables in same event line
+        same_line = [item for item in all_syllables if item.event_line_index == s.event_line_index]
+        ord_idx = next((i for i, item in enumerate(same_line) if item.id == s.id), -1)
+        next_s = same_line[ord_idx + 1] if (ord_idx >= 0 and ord_idx + 1 < len(same_line)) else None
+
         # 1. Header Row
-        title_text = ft.Text(f"Слог: «{text}»  ({dur_ms} мс)", size=14, weight=ft.FontWeight.BOLD, color=pal.fg)
+        title_text = ft.Text(
+            f"Слог: «{text}» ({s.id})  |  \\{s.tag_type.value}  |  {dur_ms} мс ({s.duration_cs}cs)",
+            size=13,
+            weight=ft.FontWeight.BOLD,
+            color=pal.fg,
+        )
         time_text = ft.Text(f"{format_ass_time(s.start)} - {format_ass_time(s.end)}", size=11, color=pal.muted)
 
         close_btn = ft.IconButton(
@@ -291,11 +375,12 @@ class EditorView(ft.Container):
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
         )
 
-        # 2. Duration Nudges (-50ms, -10ms, +10ms, +50ms)
-        def _nudge(delta_cs: int):
+        # 2. Timing Nudges: Duration (±10ms, ±50ms) and Seam / Boundary Redistribution
+        def _nudge_dur(delta_cs: int):
             if not self.document:
                 return
             try:
+                self._push_undo()
                 nudge_syllable_duration(self.document, s.id, delta_cs)
                 if self.on_document_changed:
                     self.on_document_changed(self.document)
@@ -303,35 +388,41 @@ class EditorView(ft.Container):
             except Exception as ex:
                 self._show_snack(f"Ошибка длительности: {ex}", is_error=True)
 
-        nudge_btns = ft.Row(
+        def _nudge_boundary(delta_cs: int):
+            if not self.document or not next_s:
+                self._show_snack("Нет следующего слога для смещения границы", is_error=True)
+                return
+            try:
+                self._push_undo()
+                new_boundary = next_s.start + (delta_cs / 100.0)
+                redistribute_boundary(self.document, s.id, next_s.id, new_boundary)
+                if self.on_document_changed:
+                    self.on_document_changed(self.document)
+                self._refresh_ui()
+                self._show_snack(f"Граница сдвинута на {delta_cs*10:+d}мс")
+            except Exception as ex:
+                self._show_snack(f"Ошибка сдвига границы: {ex}", is_error=True)
+
+        timing_row = ft.Row(
             [
-                ft.FilledButton(
-                    "-50мс",
-                    style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(8, 4, 8, 4)),
-                    on_click=lambda e: _nudge(-5),
-                ),
-                ft.FilledButton(
-                    "-10мс",
-                    style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(8, 4, 8, 4)),
-                    on_click=lambda e: _nudge(-1),
-                ),
-                ft.FilledButton(
-                    "+10мс",
-                    style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(8, 4, 8, 4)),
-                    on_click=lambda e: _nudge(1),
-                ),
-                ft.FilledButton(
-                    "+50мс",
-                    style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(8, 4, 8, 4)),
-                    on_click=lambda e: _nudge(5),
-                ),
+                ft.Text("Длительность:", size=11, color=pal.muted),
+                ft.FilledButton("-50мс", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: _nudge_dur(-5)),
+                ft.FilledButton("-10мс", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: _nudge_dur(-1)),
+                ft.FilledButton("+10мс", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: _nudge_dur(1)),
+                ft.FilledButton("+50мс", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: _nudge_dur(5)),
+                ft.VerticalDivider(width=4),
+                ft.Text("Шов со след.:", size=11, color=pal.muted),
+                ft.FilledButton("⇥ -10мс", disabled=not next_s, style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: _nudge_boundary(-1)),
+                ft.FilledButton("+10мс ⇤", disabled=not next_s, style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: _nudge_boundary(1)),
             ],
-            spacing=6,
-            alignment=ft.MainAxisAlignment.CENTER,
+            wrap=True,
+            spacing=4,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
-        # 3. Action Buttons (Burst, Split, Merge, Insert, Delete)
+        # 3. Actions Row 1: Structural operations (Burst, Split, Merge, Insert, Delete)
         def _toggle_burst(e):
+            self._push_undo()
             if is_burst:
                 uncolour_burst(self.document, [s.id])
             else:
@@ -342,6 +433,7 @@ class EditorView(ft.Container):
 
         def _split(e):
             try:
+                self._push_undo()
                 res = split_syllable(self.document, s.id)
                 if self.on_document_changed:
                     self.on_document_changed(self.document)
@@ -353,11 +445,9 @@ class EditorView(ft.Container):
                 self._show_snack(f"Не удалось разделить: {ex}", is_error=True)
 
         def _merge(e):
-            same_line = [item for item in all_syllables if item.event_line_index == s.event_line_index]
-            ord_idx = next((i for i, item in enumerate(same_line) if item.id == s.id), -1)
-            if ord_idx >= 0 and ord_idx + 1 < len(same_line):
-                next_s = same_line[ord_idx + 1]
+            if next_s:
                 try:
+                    self._push_undo()
                     res = merge_syllables(self.document, [s.id, next_s.id])
                     if self.on_document_changed:
                         self.on_document_changed(self.document)
@@ -372,6 +462,7 @@ class EditorView(ft.Container):
 
         def _insert(e):
             try:
+                self._push_undo()
                 res = insert_after(self.document, s.id)
                 if self.on_document_changed:
                     self.on_document_changed(self.document)
@@ -384,6 +475,7 @@ class EditorView(ft.Container):
 
         def _delete(e):
             try:
+                self._push_undo()
                 res = delete_syllable(self.document, s.id)
                 if self.on_document_changed:
                     self.on_document_changed(self.document)
@@ -404,87 +496,48 @@ class EditorView(ft.Container):
                     ),
                     on_click=_toggle_burst,
                 ),
-                ft.FilledButton(
-                    "✂ Разрезать",
-                    style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(10, 6, 10, 6)),
-                    on_click=_split,
-                ),
-                ft.FilledButton(
-                    "🔗 Слить",
-                    style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(10, 6, 10, 6)),
-                    on_click=_merge,
-                ),
-                ft.FilledButton(
-                    "➕ Вставить",
-                    style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(10, 6, 10, 6)),
-                    on_click=_insert,
-                ),
-                ft.FilledButton(
-                    "🗑",
-                    style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.danger, padding=ft.Padding(10, 6, 10, 6)),
-                    on_click=_delete,
-                ),
+                ft.FilledButton("✂ Разрезать", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(8, 6, 8, 6)), on_click=_split),
+                ft.FilledButton("🔗 Слить", disabled=not next_s, style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(8, 6, 8, 6)), on_click=_merge),
+                ft.FilledButton("➕ Вставить", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(8, 6, 8, 6)), on_click=_insert),
+                ft.FilledButton("🗑", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.danger, padding=ft.Padding(8, 6, 8, 6)), on_click=_delete),
             ],
             wrap=True,
-            spacing=6,
+            spacing=4,
         )
 
-        # 4. Navigation & Text Editing Row
+        # 4. Actions Row 2: Text & Tag edit, Navigation & Jump
         def _nav(step: int):
             new_idx = idx + step
             if 0 <= new_idx < len(all_syllables):
                 self.selected_syllable_id = all_syllables[new_idx].id
                 self._refresh_ui()
 
-        def _open_edit_text(e):
-            self._open_text_dialog(s)
-
-        def _jump_to_sps(e):
-            if self.on_jump_to_sps:
-                self.on_jump_to_sps(s.id)
-
         nav_row = ft.Row(
             [
-                ft.FilledButton(
-                    "◀ Пред",
-                    disabled=idx <= 0,
-                    style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(8, 4, 8, 4)),
-                    on_click=lambda e: _nav(-1),
-                ),
-                ft.FilledButton(
-                    "След ▶",
-                    disabled=idx >= len(all_syllables) - 1,
-                    style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(8, 4, 8, 4)),
-                    on_click=lambda e: _nav(1),
-                ),
-                ft.FilledButton(
-                    "✏ Текст",
-                    style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(10, 4, 10, 4)),
-                    on_click=_open_edit_text,
-                ),
-                ft.FilledButton(
-                    "🎯 В точный SPS",
-                    style=ft.ButtonStyle(bgcolor=pal.accent, color=pal.accent_fg, padding=ft.Padding(10, 4, 10, 4)),
-                    on_click=_jump_to_sps,
-                ),
+                ft.FilledButton("↶", tooltip="Отменить", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=self.undo),
+                ft.FilledButton("↷", tooltip="Повторить", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=self.redo),
+                ft.FilledButton("◀ Пред", disabled=idx <= 0, style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(8, 4, 8, 4)), on_click=lambda e: _nav(-1)),
+                ft.FilledButton("След ▶", disabled=idx >= len(all_syllables) - 1, style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(8, 4, 8, 4)), on_click=lambda e: _nav(1)),
+                ft.FilledButton("✏ Текст и тип", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(10, 4, 10, 4)), on_click=lambda e: self._open_text_dialog(s)),
+                ft.FilledButton("🎯 В точный SPS", style=ft.ButtonStyle(bgcolor=pal.accent, color=pal.accent_fg, padding=ft.Padding(10, 4, 10, 4)), on_click=lambda e: self._transfer_to_sps()),
             ],
             wrap=True,
-            spacing=6,
+            spacing=4,
         )
 
         self.docked_toolbar.content = ft.Container(
             content=ft.Column(
                 [
                     header_row,
-                    nudge_btns,
+                    timing_row,
                     actions_row,
                     nav_row,
                 ],
-                spacing=6,
+                spacing=5,
             ),
             bgcolor=pal.raised,
-            padding=10,
-            border_radius=12,
+            padding=8,
+            border_radius=10,
             border=ft.Border.all(1.5, pal.accent),
         )
 
@@ -503,24 +556,38 @@ class EditorView(ft.Container):
             label="Ромадзи (чтение)",
             value=s.romanization or "",
         )
+        tag_dropdown = ft.Dropdown(
+            label="Тип тега караоке",
+            options=[
+                ft.dropdown.Option("k", "\\k (резкий)"),
+                ft.dropdown.Option("kf", "\\kf (плавный)"),
+                ft.dropdown.Option("ko", "\\ko (outline)"),
+                ft.dropdown.Option("K", "\\K (плавный alias)"),
+            ],
+            value=s.tag_type.value,
+        )
 
         def _save(e):
             try:
+                self._push_undo()
                 if text_input.value != s.visible_text:
                     set_syllable_text(self.document, s.id, text_input.value)
                 if rom_input.value != s.romanization:
                     set_syllable_romanization(self.document, s.id, rom_input.value)
+                if tag_dropdown.value != s.tag_type.value:
+                    set_tag_type(self.document, [s.id], tag_dropdown.value)
+
                 if self.on_document_changed:
                     self.on_document_changed(self.document)
                 dialog.open = False
                 self._refresh_ui()
-                self._show_snack("Текст слога обновлен")
+                self._show_snack("Слог успешно обновлён")
             except Exception as ex:
                 self._show_snack(f"Ошибка сохранения: {ex}", is_error=True)
 
         dialog = ft.AlertDialog(
-            title=ft.Text("Редактирование слога", color=pal.fg),
-            content=ft.Column([text_input, rom_input], tight=True, spacing=10),
+            title=ft.Text(f"Редактирование {s.id}", color=pal.fg),
+            content=ft.Column([text_input, rom_input, tag_dropdown], tight=True, spacing=10),
             actions=[
                 ft.TextButton("Отмена", on_click=lambda e: setattr(dialog, "open", False) or self.page.update()),
                 ft.FilledButton("Сохранить", on_click=_save),
@@ -545,9 +612,3 @@ class EditorView(ft.Container):
                 self._show_snack(f"Субтитры загружены: {f.name}")
             except Exception as ex:
                 self._show_snack(f"Ошибка чтения: {ex}", is_error=True)
-
-    def _on_romanize(self, e):
-        if not self.document:
-            return
-        self._refresh_ui()
-        self._show_snack("Ромадзи обработано")
