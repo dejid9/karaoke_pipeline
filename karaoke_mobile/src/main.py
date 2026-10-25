@@ -96,4 +96,10 @@ def main(page: ft.Page):
 
 
 if __name__ == "__main__":
-    ft.app(target=main)
+    if hasattr(ft, "run"):
+        ft.run(main)
+    elif hasattr(ft, "app"):
+        ft.app(target=main)
+    else:
+        import flet.app as flet_app
+        flet_app.run(main)

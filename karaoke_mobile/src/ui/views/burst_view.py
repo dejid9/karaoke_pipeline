@@ -27,7 +27,7 @@ class BurstView(ft.Container):
     def __init__(self, on_settings_changed: Optional[Callable[[RenderLayoutSettings], None]] = None):
         super().__init__()
         self.expand = True
-        self.padding = ft.padding.all(16)
+        self.padding = 16
         self.on_settings_changed = on_settings_changed
 
         # State
@@ -96,7 +96,7 @@ class BurstView(ft.Container):
             bgcolor="#11111b",
             padding=20,
             border_radius=12,
-            border=ft.border.all(1, SURFACE_ELEVATED),
+            border=ft.Border.all(1, SURFACE_ELEVATED),
         )
 
         # 3. Settings controls
@@ -110,13 +110,13 @@ class BurstView(ft.Container):
         )
         self.hz_label = ft.Text(f"Частота пульсации: {self.pulse_hz:.1f} Гц ({(self.pulse_hz * 60):.0f} BPM)", size=13, color=TEXT_SECONDARY)
 
-        self.base_color_btn = ft.ElevatedButton(
+        self.base_color_btn = ft.FilledButton(
             "Базовый: Красный",
             icon=ft.Icons.COLOR_LENS,
             style=ft.ButtonStyle(bgcolor="#FF0000", color="#FFFFFF"),
             on_click=self._on_pick_base_color,
         )
-        self.alt_color_btn = ft.ElevatedButton(
+        self.alt_color_btn = ft.FilledButton(
             "Второй: Оранжевый",
             icon=ft.Icons.COLOR_LENS,
             style=ft.ButtonStyle(bgcolor="#FF8000", color="#FFFFFF"),
@@ -157,21 +157,23 @@ class BurstView(ft.Container):
         def _anim_loop():
             start_time = time.time()
             while self.anim_running:
-                if self.current_mode == "dynamic":
-                    elapsed = time.time() - start_time
-                    # Sinusoidal factor: 0.5 * (1 - cos(2*pi * hz * t))
-                    factor = 0.5 * (1.0 - math.cos(2.0 * math.pi * self.pulse_hz * elapsed))
-                    curr_color = self._interpolate_color(self.base_color_hex, self.alt_color_hex, factor)
+                try:
+                    if self.current_mode == "dynamic" and self.page is not None:
+                        elapsed = time.time() - start_time
+                        # Sinusoidal factor: 0.5 * (1 - cos(2*pi * hz * t))
+                        factor = 0.5 * (1.0 - math.cos(2.0 * math.pi * self.pulse_hz * elapsed))
+                        curr_color = self._interpolate_color(self.base_color_hex, self.alt_color_hex, factor)
 
-                    # Update colors on UI thread
-                    self.preview_syllable_1.color = curr_color
-                    self.preview_syllable_2.color = curr_color
-                    self.preview_syllable_3.color = curr_color
-                    if self.page:
+                        # Update colors on UI thread
+                        self.preview_syllable_1.color = curr_color
+                        self.preview_syllable_2.color = curr_color
+                        self.preview_syllable_3.color = curr_color
                         self.preview_syllable_1.update()
                         self.preview_syllable_2.update()
                         self.preview_syllable_3.update()
-                time.sleep(0.033)  # ~30-60 FPS UI tick
+                except Exception:
+                    pass
+                time.sleep(0.05)
 
         threading.Thread(target=_anim_loop, daemon=True).start()
 

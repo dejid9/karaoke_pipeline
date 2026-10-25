@@ -29,16 +29,19 @@ def apply_mobile_theme(page: ft.Page) -> None:
     page.padding = 0
 
     # Mobile viewport defaults (when testing on desktop)
-    page.window.width = 412
-    page.window.height = 860
-    page.window.min_width = 360
-    page.window.min_height = 640
+    try:
+        if hasattr(page, "window") and page.window:
+            page.window.width = 412
+            page.window.height = 860
+            page.window.min_width = 360
+            page.window.min_height = 640
+    except Exception:
+        pass
 
     page.theme = ft.Theme(
         color_scheme=ft.ColorScheme(
             primary=COLOR_PRIMARY,
             secondary=COLOR_SECONDARY,
-            background=BG_DARK,
             surface=SURFACE_DARK,
         )
     )

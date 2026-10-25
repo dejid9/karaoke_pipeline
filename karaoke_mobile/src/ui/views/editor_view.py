@@ -27,7 +27,7 @@ class EditorView(ft.Container):
     def __init__(self, on_document_changed: Optional[Callable[[AssDocument], None]] = None):
         super().__init__()
         self.expand = True
-        self.padding = ft.padding.all(12)
+        self.padding = 12
         self.on_document_changed = on_document_changed
 
         self.document: Optional[AssDocument] = None
@@ -55,7 +55,7 @@ class EditorView(ft.Container):
             on_click=self._on_open_ass,
         )
 
-        self.romanize_btn = ft.ElevatedButton(
+        self.romanize_btn = ft.FilledButton(
             "Ромадзи",
             icon=ft.Icons.TRANSLATE,
             style=ft.ButtonStyle(
@@ -93,7 +93,7 @@ class EditorView(ft.Container):
                 ],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             ),
-            alignment=ft.alignment.center,
+            alignment=ft.Alignment.CENTER,
             expand=True,
         )
 
@@ -193,7 +193,7 @@ class EditorView(ft.Container):
                 tight=True,
             ),
             bgcolor=chip_bg,
-            padding=ft.padding.symmetric(horizontal=8, vertical=6),
+            padding=ft.Padding(8, 6, 8, 6),
             border_radius=8,
             ink=True,
             on_click=_on_chip_tap,

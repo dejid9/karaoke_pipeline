@@ -1,0 +1,21 @@
+[project]
+name = "karaoke-mobile"
+version = "1.0.0"
+description = "Karaoke Mobile Pipeline Application"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "flet>=1.0.5",
+    "numpy>=1.26",
+    "Pillow>=10.0",
+    "langdetect>=1.0.9"
+]
+
+[tool.flet]
+org = "com.karaoke"
+product = "Karaoke Mobile"
+company = "Karaoke Pipeline"
+copyright = "Copyright (C) 2026"
+
+[tool.flet.app]
+path = "src"

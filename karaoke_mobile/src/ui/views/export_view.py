@@ -27,7 +27,7 @@ class ExportView(ft.Container):
     def __init__(self, get_document: Optional[Callable[[], Optional[AssDocument]]] = None):
         super().__init__()
         self.expand = True
-        self.padding = ft.padding.all(16)
+        self.padding = 16
         self.get_document = get_document
 
         self._build_controls()
@@ -36,14 +36,14 @@ class ExportView(ft.Container):
         # 1. ASS Export Card
         self.ass_status = ft.Text("Готов к экспорту", size=13, color=TEXT_SECONDARY)
 
-        self.export_ass_btn = ft.ElevatedButton(
+        self.export_ass_btn = ft.FilledButton(
             "Экспортировать .ASS файл",
             icon=ft.Icons.FILE_DOWNLOAD,
             style=ft.ButtonStyle(
                 color="#11111b",
                 bgcolor=COLOR_PRIMARY,
                 shape=ft.RoundedRectangleBorder(radius=10),
-                padding=ft.padding.symmetric(vertical=12, horizontal=20),
+                padding=ft.Padding(20, 12, 20, 12),
             ),
             on_click=self._on_export_ass,
         )
@@ -69,14 +69,14 @@ class ExportView(ft.Container):
         # 2. Audio Snippet Export Card (Burst preview clip)
         self.burst_slice_status = ft.Text("", size=13, color=TEXT_SECONDARY)
 
-        self.export_audio_snippet_btn = ft.ElevatedButton(
+        self.export_audio_snippet_btn = ft.FilledButton(
             "Экспортировать отрывок бёрста (.wav / .mp3)",
             icon=ft.Icons.AUDIOTRACK,
             style=ft.ButtonStyle(
                 color=TEXT_PRIMARY,
                 bgcolor=SURFACE_ELEVATED,
                 shape=ft.RoundedRectangleBorder(radius=10),
-                padding=ft.padding.symmetric(vertical=12, horizontal=20),
+                padding=ft.Padding(20, 12, 20, 12),
             ),
             on_click=self._on_export_burst_audio,
         )

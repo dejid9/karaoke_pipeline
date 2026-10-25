@@ -27,7 +27,7 @@ class MFAView(ft.Container):
     def __init__(self, on_alignment_success: Optional[Callable[[str], None]] = None):
         super().__init__()
         self.expand = True
-        self.padding = ft.padding.all(16)
+        self.padding = 16
         self.on_alignment_success = on_alignment_success
         self.client = ColabMFAClient()
 
@@ -53,7 +53,7 @@ class MFAView(ft.Container):
             expand=True,
         )
 
-        self.ping_btn = ft.ElevatedButton(
+        self.ping_btn = ft.FilledButton(
             "Проверить",
             icon=ft.Icons.REFRESH,
             style=ft.ButtonStyle(
@@ -85,7 +85,7 @@ class MFAView(ft.Container):
         # 2. File Selection & Transcript Section
         self.audio_info_text = ft.Text("Аудиофайл не выбран", size=13, color=TEXT_MUTED)
 
-        self.audio_picker_btn = ft.ElevatedButton(
+        self.audio_picker_btn = ft.FilledButton(
             "Выбрать аудио (.wav / .mp3)",
             icon=ft.Icons.AUDIO_FILE,
             style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8)),
@@ -133,13 +133,13 @@ class MFAView(ft.Container):
         self.progress_bar = ft.ProgressBar(visible=False, color=COLOR_PRIMARY)
         self.log_text = ft.Text("", size=12, color=TEXT_SECONDARY)
 
-        self.align_btn = ft.ElevatedButton(
+        self.align_btn = ft.FilledButton(
             "🚀 Выровнять через Colab MFA",
             icon=ft.Icons.AUTO_AWESOME,
             style=ft.ButtonStyle(
                 color="#11111b",
                 bgcolor=COLOR_PRIMARY,
-                padding=ft.padding.symmetric(vertical=14, horizontal=24),
+                padding=ft.Padding(24, 14, 24, 14),
                 shape=ft.RoundedRectangleBorder(radius=10),
             ),
             width=380,
