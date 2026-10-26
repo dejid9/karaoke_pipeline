@@ -550,7 +550,7 @@ class SPSView(ft.Container):
                 self._safe_update()
 
             txt = s.text.strip() or "..."
-            dur_ms = int(round(s.effective_duration * 1000))
+            dur_ms = int(round((s.effective_end - s.effective_start) * 1000))
             badge_meas = " ✓" if is_meas else ""
 
             self.syllable_chips_row.controls.append(

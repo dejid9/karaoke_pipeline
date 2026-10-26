@@ -30,6 +30,10 @@ class TimelineSyllable:
         return self.measured_end if self.measured_end is not None else self.end
 
     @property
+    def effective_duration(self) -> float:
+        return self.effective_end - self.effective_start
+
+    @property
     def measurement_changed(self) -> bool:
         return self.measured_start is not None or self.measured_end is not None
 
