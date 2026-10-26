@@ -30,8 +30,42 @@ jobs:
           python -m pip install --upgrade pip
           pip install "flet[all]>=1.0.5"
 
+      - name: Configure Gradle and pre-fetch bridge binaries
+        run: |
+          mkdir -p ~/.gradle
+          cat << 'EOF' > ~/.gradle/gradle.properties
+          org.gradle.parallel=false
+          org.gradle.workers.max=1
+          org.gradle.jvmargs=-Xmx3072m -XX:MaxMetaspaceSize=1024m
+          EOF
+
+          python - << 'EOF'
+          import os, pathlib, urllib.request
+          from flet_cli.utils.python_versions import get_default_python_version
+
+          bridge_dir = pathlib.Path("${{ runner.temp }}/dart_bridge")
+          bridge_dir.mkdir(parents=True, exist_ok=True)
+          version = "1.10.0"
+          try:
+              py_ver = get_default_python_version()
+          except Exception:
+              py_ver = "3.14"
+
+          print(f"Target python version for dart-bridge: {py_ver}")
+          for abi in ["arm64-v8a", "armeabi-v7a", "x86_64"]:
+              filename = f"libdart_bridge-android-{abi}-py{py_ver}.so"
+              url = f"https://github.com/flet-dev/dart-bridge/releases/download/v{version}/{filename}"
+              dest = bridge_dir / filename
+              print(f"Pre-fetching {filename}...")
+              urllib.request.urlretrieve(url, dest)
+              print(f"-> Saved {dest} ({dest.stat().st_size} bytes)")
+          EOF
+
       - name: Build Android APK
         working-directory: karaoke_mobile
+        env:
+          SERIOUS_PYTHON_DART_BRIDGE_DIST: ${{ runner.temp }}/dart_bridge
+          GRADLE_OPTS: "-Dorg.gradle.parallel=false -Dorg.gradle.workers.max=1"
         run: |
           flet build apk src -o build/apk --project KaraokeMobile --arch arm64-v8a --android-permissions android.permission.READ_EXTERNAL_STORAGE=true android.permission.READ_MEDIA_AUDIO=true --yes --no-rich-output
 
