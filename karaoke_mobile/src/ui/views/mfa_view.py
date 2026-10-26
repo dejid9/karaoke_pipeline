@@ -143,11 +143,12 @@ class MFAView(ft.Container):
             content=ft.Column(
                 [
                     ft.Text("Исходные данные", size=15, weight=ft.FontWeight.BOLD, color=pal.fg),
-                    ft.Row([self.audio_picker_btn, self.audio_info_text], wrap=True),
+                    self.audio_picker_btn,
+                    self.audio_info_text,
                     self.transcript_input,
                     self.lang_dropdown,
                 ],
-                spacing=10,
+                spacing=8,
             ),
             bgcolor=pal.panel,
             padding=14,

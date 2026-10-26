@@ -15,6 +15,7 @@ from core.measurements import (
     load_measurements,
 )
 from core.sps import BurstCandidate, MeasurementTimeline, detect_bursts
+from ui.components.audio_timeline import AudioTimelineWidget
 from ui.theme import ThemePalette, get_current_palette
 
 
@@ -26,6 +27,7 @@ class SPSView(ft.Container):
         on_document_changed: Optional[Callable[[AssDocument], None]] = None,
         on_measurements_changed: Optional[Callable[[MeasurementTimeline], None]] = None,
         on_return_to_karaoke: Optional[Callable[[str], None]] = None,
+        on_audio_loaded: Optional[Callable[[str, bytes, Optional[object], Optional[object]], None]] = None,
     ):
         super().__init__()
         self.expand = True
@@ -33,6 +35,7 @@ class SPSView(ft.Container):
         self.on_document_changed = on_document_changed
         self.on_measurements_changed = on_measurements_changed
         self.on_return_to_karaoke = on_return_to_karaoke
+        self.on_audio_loaded_cb = on_audio_loaded
 
         self.document: Optional[AssDocument] = None
         self.timeline: Optional[MeasurementTimeline] = None
@@ -40,6 +43,9 @@ class SPSView(ft.Container):
         self.selected_burst: Optional[BurstCandidate] = None
         self.selected_syllable_id: Optional[str] = None
         self.min_peak_sps: float = 6.0
+
+        # Audio Timeline (Waveform & Spectrogram)
+        self.audio_timeline = AudioTimelineWidget(on_audio_loaded=self._handle_audio_loaded)
 
         # Measurement Undo/Redo history
         self._meas_undo_stack: list[dict[str, tuple[float, float]]] = []
@@ -51,8 +57,12 @@ class SPSView(ft.Container):
 
         self._build_controls()
 
+    def _handle_audio_loaded(self, name: str, data: bytes, waveform, spectrogram):
+        if self.on_audio_loaded_cb:
+            self.on_audio_loaded_cb(name, data, waveform, spectrogram)
+
     def get_services(self) -> list[ft.Service]:
-        return [self.meas_save_picker, self.meas_open_picker]
+        return [self.meas_save_picker, self.meas_open_picker] + self.audio_timeline.get_services()
 
     def _safe_update(self):
         try:
@@ -62,6 +72,7 @@ class SPSView(ft.Container):
 
     def apply_theme(self, pal: ThemePalette):
         """Dynamic theme update."""
+        self.audio_timeline.apply_theme(pal)
         self._build_controls()
         self._refresh_ui()
         self._safe_update()
@@ -158,23 +169,26 @@ class SPSView(ft.Container):
             on_click=lambda e: self._return_to_karaoke(),
         )
 
+        header_row1 = ft.Row(
+            [
+                ft.Text("Точный SPS (Exact)", size=17, weight=ft.FontWeight.BOLD, color=pal.fg),
+                self.back_to_editor_btn,
+            ],
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+        header_row2 = ft.Row([self.summary_badge, self.fastest_burst_badge], wrap=True, spacing=6)
+
         header_card = ft.Container(
-            content=ft.Row(
+            content=ft.Column(
                 [
-                    ft.Column(
-                        [
-                            ft.Text("Точный SPS (Exact Perceptual)", size=17, weight=ft.FontWeight.BOLD, color=pal.fg),
-                            ft.Row([self.summary_badge, self.fastest_burst_badge], wrap=True, spacing=6),
-                        ],
-                        spacing=1,
-                        expand=True,
-                    ),
-                    self.back_to_editor_btn,
+                    header_row1,
+                    header_row2,
                 ],
-                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                spacing=4,
             ),
             bgcolor=pal.panel,
-            padding=10,
+            padding=ft.Padding(12, 8, 12, 8),
             border_radius=10,
             border=ft.Border.all(1, pal.border),
         )
@@ -242,7 +256,7 @@ class SPSView(ft.Container):
         controls_card = ft.Container(
             content=ft.Column(
                 [
-                    ft.Row([self.sps_slider_label, self.sps_slider], alignment=ft.MainAxisAlignment.SPACE_BETWEEN, expand=True),
+                    ft.Row([self.sps_slider_label, ft.Container(content=self.sps_slider, expand=True)], vertical_alignment=ft.CrossAxisAlignment.CENTER),
                     ft.Row(
                         [
                             self.select_fastest_btn,
@@ -269,7 +283,6 @@ class SPSView(ft.Container):
 
         self.meas_start_field = ft.TextField(
             label="Start (сек)",
-            width=110,
             text_size=13,
             dense=True,
             border_radius=8,
@@ -277,7 +290,6 @@ class SPSView(ft.Container):
         )
         self.meas_end_field = ft.TextField(
             label="End (сек)",
-            width=110,
             text_size=13,
             dense=True,
             border_radius=8,
@@ -308,37 +320,49 @@ class SPSView(ft.Container):
             color=pal.muted,
         )
 
+        start_row_input = ft.Row(
+            [
+                ft.Text("Start:", size=13, weight=ft.FontWeight.BOLD, color=pal.fg, width=42),
+                ft.Container(content=self.meas_start_field, expand=True),
+            ],
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+        start_row_steppers = ft.Row(
+            [
+                self.nudge_start_minus50,
+                self.nudge_start_minus,
+                self.nudge_start_plus,
+                self.nudge_start_plus50,
+            ],
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+        )
+
+        end_row_input = ft.Row(
+            [
+                ft.Text("End:  ", size=13, weight=ft.FontWeight.BOLD, color=pal.fg, width=42),
+                ft.Container(content=self.meas_end_field, expand=True),
+            ],
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+        end_row_steppers = ft.Row(
+            [
+                self.nudge_end_minus50,
+                self.nudge_end_minus,
+                self.nudge_end_plus,
+                self.nudge_end_plus50,
+            ],
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+        )
+
         meas_editor_card = ft.Container(
             content=ft.Column(
                 [
                     self.meas_syllable_label,
                     self.meas_info_label,
-                    ft.Row(
-                        [
-                            ft.Text("Start:", size=12, color=pal.muted),
-                            self.nudge_start_minus50,
-                            self.nudge_start_minus,
-                            self.meas_start_field,
-                            self.nudge_start_plus,
-                            self.nudge_start_plus50,
-                        ],
-                        wrap=True,
-                        spacing=4,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    ),
-                    ft.Row(
-                        [
-                            ft.Text("End: ", size=12, color=pal.muted),
-                            self.nudge_end_minus50,
-                            self.nudge_end_minus,
-                            self.meas_end_field,
-                            self.nudge_end_plus,
-                            self.nudge_end_plus50,
-                        ],
-                        wrap=True,
-                        spacing=4,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    ),
+                    start_row_input,
+                    start_row_steppers,
+                    end_row_input,
+                    end_row_steppers,
                     ft.Row(
                         [
                             self.prev_syl_btn,
@@ -399,6 +423,7 @@ class SPSView(ft.Container):
             controls=[
                 header_card,
                 controls_card,
+                self.audio_timeline,
                 meas_editor_card,
                 self.syllable_chips_container,
                 self.burst_list_container,
@@ -578,11 +603,13 @@ class SPSView(ft.Container):
             self.meas_info_label.value = "ASS: — | Замер: —"
             self.meas_start_field.value = ""
             self.meas_end_field.value = ""
+            self.audio_timeline.set_active_bounds(None, None, None, None)
             return
 
         lookup = {s.id: s for s in self.timeline.syllables}
         syl = lookup.get(self.selected_syllable_id)
         if not syl:
+            self.audio_timeline.set_active_bounds(None, None, None, None)
             return
 
         ass_dur = int(round((syl.end - syl.start) * 1000))
@@ -599,6 +626,9 @@ class SPSView(ft.Container):
         )
         self.meas_start_field.value = f"{syl.effective_start:.3f}"
         self.meas_end_field.value = f"{syl.effective_end:.3f}"
+        meas_st = syl.effective_start if syl.measurement_changed else None
+        meas_en = syl.effective_end if syl.measurement_changed else None
+        self.audio_timeline.focus_syllable(syl.start, syl.end, meas_st, meas_en)
 
     def _on_meas_apply(self, e):
         if not self.timeline or not self.selected_syllable_id:

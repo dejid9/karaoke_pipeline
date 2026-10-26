@@ -20,6 +20,7 @@ from core.editor import (
     split_syllable,
     uncolour_burst,
 )
+from ui.components.audio_timeline import AudioTimelineWidget
 from ui.theme import ThemePalette, get_current_palette
 
 
@@ -30,16 +31,21 @@ class EditorView(ft.Container):
         self,
         on_document_changed: Optional[Callable[[AssDocument], None]] = None,
         on_jump_to_sps: Optional[Callable[[str], None]] = None,
+        on_audio_loaded: Optional[Callable[[str, bytes, Optional[object], Optional[object]], None]] = None,
     ):
         super().__init__()
         self.expand = True
         self.padding = 10
         self.on_document_changed = on_document_changed
         self.on_jump_to_sps = on_jump_to_sps
+        self.on_audio_loaded_cb = on_audio_loaded
 
         self.document: Optional[AssDocument] = None
         self.selected_syllable_id: Optional[str] = None
         self.ass_picker = ft.FilePicker(on_result=self._on_ass_picked)
+
+        # Audio Timeline (Waveform & Spectrogram)
+        self.audio_timeline = AudioTimelineWidget(on_audio_loaded=self._handle_audio_loaded)
 
         # Undo/Redo history stack
         self._undo_stack: list[str] = []
@@ -47,8 +53,12 @@ class EditorView(ft.Container):
 
         self._build_controls()
 
+    def _handle_audio_loaded(self, name: str, data: bytes, waveform, spectrogram):
+        if self.on_audio_loaded_cb:
+            self.on_audio_loaded_cb(name, data, waveform, spectrogram)
+
     def get_services(self) -> list[ft.Service]:
-        return [self.ass_picker]
+        return [self.ass_picker] + self.audio_timeline.get_services()
 
     def _safe_update(self):
         try:
@@ -58,6 +68,7 @@ class EditorView(ft.Container):
 
     def apply_theme(self, pal: ThemePalette):
         """Update colors dynamically when theme changes."""
+        self.audio_timeline.apply_theme(pal)
         self._build_controls()
         self._refresh_ui()
         self._safe_update()
@@ -144,38 +155,49 @@ class EditorView(ft.Container):
             on_click=self.redo,
         )
 
-        self.sps_jump_top_btn = ft.FilledButton(
-            "→ В точный SPS",
+        self.sps_jump_top_btn = ft.IconButton(
             icon=ft.Icons.SPEED,
-            style=ft.ButtonStyle(
-                color=pal.accent_fg,
-                bgcolor=pal.accent,
-                shape=ft.RoundedRectangleBorder(radius=8),
-                padding=ft.Padding(10, 6, 10, 6),
-            ),
+            tooltip="Перейти в точный SPS",
+            icon_size=20,
+            icon_color=pal.accent,
             on_click=lambda e: self._transfer_to_sps(),
         )
 
+        top_header_row = ft.Row(
+            [
+                ft.Text("Караоке редактор", size=18, weight=ft.FontWeight.BOLD, color=pal.fg),
+                ft.Row(
+                    [
+                        self.undo_btn,
+                        self.redo_btn,
+                        self.open_file_btn,
+                        self.sps_jump_top_btn,
+                    ],
+                    spacing=2,
+                    tight=True,
+                ),
+            ],
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+        top_stats_row = ft.Row(
+            [
+                self.stats_text,
+            ],
+            alignment=ft.MainAxisAlignment.START,
+        )
+
         top_bar = ft.Container(
-            content=ft.Row(
+            content=ft.Column(
                 [
-                    ft.Column(
-                        [
-                            ft.Text("Караоке редактор", size=17, weight=ft.FontWeight.BOLD, color=pal.fg),
-                            self.stats_text,
-                        ],
-                        spacing=1,
-                        expand=True,
-                    ),
-                    self.undo_btn,
-                    self.redo_btn,
-                    self.open_file_btn,
-                    self.sps_jump_top_btn,
+                    top_header_row,
+                    top_stats_row,
                 ],
-                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                spacing=2,
             ),
             bgcolor=pal.panel,
-            padding=ft.Padding(10, 6, 10, 6),
+            padding=ft.Padding(12, 8, 12, 8),
             border_radius=10,
             border=ft.Border.all(1, pal.border),
         )
@@ -201,6 +223,7 @@ class EditorView(ft.Container):
         self.content = ft.Column(
             [
                 top_bar,
+                self.audio_timeline,
                 ft.Container(content=self.syllables_list, expand=True),
                 self.docked_toolbar,
             ],
@@ -225,6 +248,7 @@ class EditorView(ft.Container):
             self.stats_text.value = "Слогов: 0 | Бёрст: 0"
             self.stats_text.color = pal.muted
             self.docked_toolbar.visible = False
+            self.audio_timeline.set_active_bounds(None, None)
             self._safe_update()
             return
 
@@ -254,9 +278,11 @@ class EditorView(ft.Container):
         if selected_syl:
             self._update_docked_toolbar(selected_syl, all_syllables)
             self.docked_toolbar.visible = True
+            self.audio_timeline.focus_syllable(selected_syl.start, selected_syl.end)
         else:
             self.selected_syllable_id = None
             self.docked_toolbar.visible = False
+            self.audio_timeline.set_active_bounds(None, None)
 
         self._safe_update()
 

@@ -26,6 +26,8 @@ class ProjectBundle:
     burst_settings: Dict[str, Any] = field(default_factory=dict)
     audio_filename: Optional[str] = None
     audio_bytes: Optional[bytes] = None
+    waveform_bytes: Optional[bytes] = None
+    spectrogram_bytes: Optional[bytes] = None
 
 
 def export_project_zip(
@@ -200,5 +202,12 @@ def import_project_zip(source_path_or_bytes: str | Path | bytes) -> ProjectBundl
                     bundle.audio_filename = Path(name).name
                     bundle.audio_bytes = zf.read(name)
                     break
+
+        # Waveform & Spectrogram cache files
+        for name in namelist:
+            if name.endswith(".wfm") and not bundle.waveform_bytes:
+                bundle.waveform_bytes = zf.read(name)
+            elif name.endswith(".spg") and not bundle.spectrogram_bytes:
+                bundle.spectrogram_bytes = zf.read(name)
 
     return bundle

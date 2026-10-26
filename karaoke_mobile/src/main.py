@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
 from typing import Any, Dict, Optional
 
 import flet as ft
 
 from core.ass import AssDocument
 from core.measurements import apply_measurements
+from core.media import WaveformData, load_waveform
 from core.project_bundle import ProjectBundle
+from core.spectrogram import SpectrogramData, load_spectrogram
 from core.sps import MeasurementTimeline
 from ui.theme import (
     DEFAULT_THEME,
@@ -32,6 +36,9 @@ def main(page: ft.Page):
     current_timeline: MeasurementTimeline | None = None
     current_audio_path: Optional[str] = None
     current_audio_name: Optional[str] = None
+    current_audio_bytes: Optional[bytes] = None
+    current_waveform: Optional[WaveformData] = None
+    current_spectrogram: Optional[SpectrogramData] = None
     current_transcript: str = ""
     current_burst_settings: Dict[str, Any] = {
         "mode": "dynamic",
@@ -39,6 +46,24 @@ def main(page: ft.Page):
         "alt_color": "#FF8000",
         "pulse_hz": 2.0,
     }
+
+    def sync_audio(
+        name: str,
+        data: Optional[bytes] = None,
+        waveform: Optional[WaveformData] = None,
+        spectrogram: Optional[SpectrogramData] = None,
+    ):
+        nonlocal current_audio_name, current_audio_bytes, current_waveform, current_spectrogram
+        current_audio_name = name
+        if data is not None:
+            current_audio_bytes = data
+        if waveform is not None:
+            current_waveform = waveform
+        if spectrogram is not None:
+            current_spectrogram = spectrogram
+
+        editor_view.audio_timeline.set_audio(name, data, current_waveform, current_spectrogram)
+        sps_view.audio_timeline.set_audio(name, data, current_waveform, current_spectrogram)
 
     def sync_document(doc: AssDocument, timeline: Optional[MeasurementTimeline] = None):
         nonlocal current_document, current_timeline
@@ -91,6 +116,17 @@ def main(page: ft.Page):
         page_container.content = views[2]
         page.update()
 
+    def on_return_to_editor(syllable_id: str):
+        """Navigate back from Exact SPS to Editor focusing on syllable."""
+        if current_document:
+            editor_view.selected_syllable_id = syllable_id
+            editor_view._refresh_ui()
+        nav_bar.selected_index = 1
+        cur_pal = get_current_palette()
+        editor_view.apply_theme(cur_pal)
+        page_container.content = views[1]
+        page.update()
+
     def on_project_loaded(bundle: ProjectBundle):
         nonlocal current_transcript, current_audio_name, current_burst_settings
         current_transcript = bundle.transcript or ""
@@ -102,6 +138,30 @@ def main(page: ft.Page):
         if bundle.transcript:
             mfa_view.transcript_input.value = bundle.transcript
             mfa_view._safe_update()
+
+        # Update Audio, Waveform & Spectrogram
+        if bundle.audio_bytes or bundle.waveform_bytes or bundle.spectrogram_bytes:
+            wfm = None
+            spg = None
+            if bundle.waveform_bytes:
+                try:
+                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wfm")
+                    tmp.write(bundle.waveform_bytes)
+                    tmp.close()
+                    wfm = load_waveform(tmp.name)
+                    os.unlink(tmp.name)
+                except Exception:
+                    pass
+            if bundle.spectrogram_bytes:
+                try:
+                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".spg")
+                    tmp.write(bundle.spectrogram_bytes)
+                    tmp.close()
+                    spg = load_spectrogram(tmp.name)
+                    os.unlink(tmp.name)
+                except Exception:
+                    pass
+            sync_audio(bundle.audio_filename or "audio.wav", bundle.audio_bytes, wfm, spg)
 
         # Update Subtitles & Measurements
         if bundle.ass_text:
@@ -141,6 +201,7 @@ def main(page: ft.Page):
             },
             "audio_path": mfa_view.selected_audio_path or current_audio_path,
             "audio_name": mfa_view.selected_audio_name or current_audio_name,
+            "audio_bytes": current_audio_bytes,
         }
 
     # Initialize Views
@@ -148,10 +209,13 @@ def main(page: ft.Page):
     editor_view = EditorView(
         on_document_changed=on_document_changed,
         on_jump_to_sps=jump_to_sps,
+        on_audio_loaded=sync_audio,
     )
     sps_view = SPSView(
         on_document_changed=on_document_changed,
         on_measurements_changed=on_measurements_changed,
+        on_return_to_karaoke=on_return_to_editor,
+        on_audio_loaded=sync_audio,
     )
     burst_view = BurstView(on_settings_changed=on_burst_settings_changed)
     export_view = ExportView(
