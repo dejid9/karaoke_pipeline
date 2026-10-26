@@ -315,6 +315,7 @@ class SPSView(ft.Container):
 
         self.prev_syl_btn = ft.FilledButton("◀ Пред", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(8, 5, 8, 5)), on_click=lambda e: self._nav_syllable(-1))
         self.next_syl_btn = ft.FilledButton("След ▶", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(8, 5, 8, 5)), on_click=lambda e: self._nav_syllable(1))
+        self.play_sps_btn = ft.FilledButton("▶ Замер", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.accent, padding=ft.Padding(8, 5, 8, 5)), on_click=self._play_selected_meas)
 
         ds = get_display_settings()
         pad = ds.button_padding(5, 3)
@@ -332,76 +333,89 @@ class SPSView(ft.Container):
             on_click=self._set_end_from_cursor,
         )
 
-        self.nudge_start_minus50 = ft.FilledButton("-50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("start", -0.05))
-        self.nudge_start_minus10 = ft.FilledButton("-10ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("start", -0.01))
-        self.nudge_start_minus5 = ft.FilledButton("-5ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("start", -0.005))
-        self.nudge_start_minus1 = ft.FilledButton("-1ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("start", -0.001))
-        self.nudge_start_plus1 = ft.FilledButton("+1ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("start", 0.001))
-        self.nudge_start_plus5 = ft.FilledButton("+5ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("start", 0.005))
-        self.nudge_start_plus10 = ft.FilledButton("+10ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("start", 0.01))
-        self.nudge_start_plus50 = ft.FilledButton("+50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("start", 0.05))
+        self.sps_step_ms: int = 10
 
-        self.nudge_end_minus50 = ft.FilledButton("-50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("end", -0.05))
-        self.nudge_end_minus10 = ft.FilledButton("-10ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("end", -0.01))
-        self.nudge_end_minus5 = ft.FilledButton("-5ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("end", -0.005))
-        self.nudge_end_minus1 = ft.FilledButton("-1ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("end", -0.001))
-        self.nudge_end_plus1 = ft.FilledButton("+1ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("end", 0.001))
-        self.nudge_end_plus5 = ft.FilledButton("+5ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("end", 0.005))
-        self.nudge_end_plus10 = ft.FilledButton("+10ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("end", 0.01))
-        self.nudge_end_plus50 = ft.FilledButton("+50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("end", 0.05))
+        self.btn_start_minus = ft.FilledButton("-10ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("start", -self.sps_step_ms / 1000.0))
+        self.btn_start_plus = ft.FilledButton("+10ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("start", self.sps_step_ms / 1000.0))
+
+        self.btn_end_minus = ft.FilledButton("-10ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("end", -self.sps_step_ms / 1000.0))
+        self.btn_end_plus = ft.FilledButton("+10ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("end", self.sps_step_ms / 1000.0))
+
+        # Compact step selector pills: 1ms, 5ms, 10ms, 50ms
+        step_btns: dict[int, ft.FilledButton] = {}
+        def _set_step(ms: int):
+            self.sps_step_ms = ms
+            self.btn_start_minus.text = f"-{ms}ms"
+            self.btn_start_plus.text = f"+{ms}ms"
+            self.btn_end_minus.text = f"-{ms}ms"
+            self.btn_end_plus.text = f"+{ms}ms"
+            for m_val, b in step_btns.items():
+                b.style = ft.ButtonStyle(
+                    bgcolor=pal.accent if m_val == ms else pal.panel,
+                    color=pal.accent_fg if m_val == ms else pal.fg,
+                    padding=ds.button_padding(4, 2),
+                )
+            p = getattr(self, "_Control__page", None) or getattr(self, "page", None)
+            if p:
+                try:
+                    p.update()
+                except Exception:
+                    self._safe_update()
+            else:
+                self._safe_update()
+
+        for ms in [1, 5, 10, 50]:
+            btn = ft.FilledButton(
+                f"{ms}ms",
+                style=ft.ButtonStyle(
+                    bgcolor=pal.accent if ms == self.sps_step_ms else pal.panel,
+                    color=pal.accent_fg if ms == self.sps_step_ms else pal.fg,
+                    padding=ds.button_padding(4, 2),
+                ),
+                on_click=lambda e, m=ms: _set_step(m),
+            )
+            step_btns[ms] = btn
+
+        step_selector_row = ft.Row(
+            [
+                ft.Text("Шаг:", size=11, weight=ft.FontWeight.BOLD, color=pal.muted),
+                step_btns[1],
+                step_btns[5],
+                step_btns[10],
+                step_btns[50],
+            ],
+            spacing=4,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
 
         sps_hint = ft.Text(
             "Start и End независимы: End можно поставить раньше Start (отрицательная длительность для опережающего пения).",
-            size=11,
+            size=10.5,
             color=pal.muted,
         )
 
-        start_row_input = ft.Row(
+        start_row = ft.Row(
             [
-                ft.Text("Start:", size=13, weight=ft.FontWeight.BOLD, color=pal.fg, width=42),
+                ft.Text("Start:", size=12, weight=ft.FontWeight.BOLD, color=pal.fg, width=38),
+                self.btn_start_minus,
                 ft.Container(content=self.meas_start_field, expand=True),
+                self.btn_start_plus,
                 self.btn_start_cursor,
             ],
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            spacing=4,
-        )
-        start_row_steppers = ft.Row(
-            [
-                self.nudge_start_minus50,
-                self.nudge_start_minus10,
-                self.nudge_start_minus5,
-                self.nudge_start_minus1,
-                self.nudge_start_plus1,
-                self.nudge_start_plus5,
-                self.nudge_start_plus10,
-                self.nudge_start_plus50,
-            ],
             spacing=3,
-            wrap=True,
         )
 
-        end_row_input = ft.Row(
+        end_row = ft.Row(
             [
-                ft.Text("End:  ", size=13, weight=ft.FontWeight.BOLD, color=pal.fg, width=42),
+                ft.Text("End:  ", size=12, weight=ft.FontWeight.BOLD, color=pal.fg, width=38),
+                self.btn_end_minus,
                 ft.Container(content=self.meas_end_field, expand=True),
+                self.btn_end_plus,
                 self.btn_end_cursor,
             ],
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            spacing=4,
-        )
-        end_row_steppers = ft.Row(
-            [
-                self.nudge_end_minus50,
-                self.nudge_end_minus10,
-                self.nudge_end_minus5,
-                self.nudge_end_minus1,
-                self.nudge_end_plus1,
-                self.nudge_end_plus5,
-                self.nudge_end_plus10,
-                self.nudge_end_plus50,
-            ],
             spacing=3,
-            wrap=True,
         )
 
         meas_editor_card = ft.Container(
@@ -409,14 +423,14 @@ class SPSView(ft.Container):
                 [
                     self.meas_syllable_label,
                     self.meas_info_label,
-                    start_row_input,
-                    start_row_steppers,
-                    end_row_input,
-                    end_row_steppers,
+                    step_selector_row,
+                    start_row,
+                    end_row,
                     ft.Row(
                         [
                             self.prev_syl_btn,
                             self.next_syl_btn,
+                            self.play_sps_btn,
                             self.meas_apply_btn,
                             self.meas_reset_btn,
                             self.meas_undo_btn,
@@ -427,10 +441,10 @@ class SPSView(ft.Container):
                     ),
                     sps_hint,
                 ],
-                spacing=6,
+                spacing=5,
             ),
             bgcolor=pal.panel,
-            padding=10,
+            padding=8,
             border_radius=10,
             border=ft.Border.all(1, pal.border),
         )
@@ -715,6 +729,15 @@ class SPSView(ft.Container):
         if self.on_measurements_changed:
             self.on_measurements_changed(self.timeline)
         self._show_snack(f"End установлен по курсору: {cur_t:.3f}с")
+
+    def _play_selected_meas(self, e=None):
+        if not self.timeline or not self.selected_syllable_id:
+            return
+        syl = next((s for s in self.timeline.syllables if s.id == self.selected_syllable_id), None)
+        if syl:
+            st = min(syl.effective_start, syl.effective_end)
+            en = max(syl.effective_start, syl.effective_end)
+            self.audio_timeline.play_range(st, en)
 
     def _on_meas_apply(self, e):
         if not self.timeline or not self.selected_syllable_id:

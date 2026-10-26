@@ -394,6 +394,10 @@ class EditorView(ft.Container):
         prev_s = same_line[ord_idx - 1] if ord_idx > 0 else None
         next_s = same_line[ord_idx + 1] if (ord_idx >= 0 and ord_idx + 1 < len(same_line)) else None
 
+        # Ensure toolbar_mode exists
+        if not hasattr(self, "toolbar_mode"):
+            self.toolbar_mode = "dur"
+
         # 1. Header Row with quick navigation and close
         def _nav(step: int):
             new_idx = idx + step
@@ -409,11 +413,20 @@ class EditorView(ft.Container):
         )
         time_text = ft.Text(f"{format_ass_time(s.start)} - {format_ass_time(s.end)} ({s.id})", size=11, color=pal.muted)
 
+        play_syl_btn = ft.IconButton(
+            icon=ft.Icons.PLAY_CIRCLE_FILL,
+            tooltip="Прослушать слог",
+            icon_size=22,
+            icon_color=pal.accent,
+            on_click=lambda e: self.audio_timeline.play_range(s.start, s.end),
+        )
+
         header_row = ft.Row(
             [
                 ft.Column([title_text, time_text], spacing=1, expand=True),
                 ft.Row(
                     [
+                        play_syl_btn,
                         ft.IconButton(
                             icon=ft.Icons.ARROW_BACK,
                             tooltip="Предыдущий слог",
@@ -544,20 +557,67 @@ class EditorView(ft.Container):
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
-        shift_and_snap_row = ft.Row(
+        shift_steppers = ft.Row(
             [
                 ft.Text("Сдвиг:", size=fsize, weight=ft.FontWeight.BOLD, color=pal.muted),
                 ft.FilledButton("-50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _shift(-5)),
                 ft.FilledButton("-10ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _shift(-1)),
                 ft.FilledButton("+10ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _shift(1)),
                 ft.FilledButton("+50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _shift(5)),
-                ft.FilledButton("🎯 Start = Курсор", tooltip="Сдвинуть начало слога к позиции курсора спектрограммы", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.accent, padding=pad), on_click=_snap_start_to_cursor),
-                ft.FilledButton("🎯 End = Курсор", tooltip="Сдвинуть конец слога к позиции курсора спектрограммы", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.accent, padding=pad), on_click=_snap_end_to_cursor),
             ],
             spacing=3,
             wrap=True,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
+
+        snap_steppers = ft.Row(
+            [
+                ft.FilledButton("🎯 Start = Курсор", tooltip="Сдвинуть начало слога к позиции курсора спектрограммы", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.accent, padding=pad), on_click=_snap_start_to_cursor),
+                ft.FilledButton("🎯 End = Курсор", tooltip="Сдвинуть конец слога к позиции курсора спектрограммы", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.accent, padding=pad), on_click=_snap_end_to_cursor),
+            ],
+            spacing=4,
+            wrap=True,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+        def _set_mode(m: str):
+            self.toolbar_mode = m
+            self._update_docked_toolbar(s, all_syllables)
+            self._safe_update()
+
+        def make_tab(label: str, mode_val: str):
+            is_active = (self.toolbar_mode == mode_val)
+            return ft.Container(
+                content=ft.Text(
+                    label,
+                    size=ds.font_size(10.5),
+                    weight=ft.FontWeight.BOLD if is_active else ft.FontWeight.NORMAL,
+                    color=pal.accent_fg if is_active else pal.fg,
+                ),
+                bgcolor=pal.accent if is_active else pal.panel,
+                border_radius=5,
+                padding=ds.button_padding(6, 3),
+                on_click=lambda e, mv=mode_val: _set_mode(mv),
+            )
+
+        mode_tabs_row = ft.Row(
+            [
+                make_tab("⏱ Длит", "dur"),
+                make_tab("⇥ Шов", "seam"),
+                make_tab("⇄ Сдвиг", "shift"),
+                make_tab("🎯 Курсор", "snap"),
+            ],
+            spacing=4,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+        active_timing_row = dur_steppers
+        if self.toolbar_mode == "seam":
+            active_timing_row = seam_steppers
+        elif self.toolbar_mode == "shift":
+            active_timing_row = shift_steppers
+        elif self.toolbar_mode == "snap":
+            active_timing_row = snap_steppers
 
         # 3. Actions Row: Text, Timing dialog, Burst, Split, Merge, Insert, Delete, and Jump to SPS
         def _toggle_burst(e):
@@ -651,9 +711,8 @@ class EditorView(ft.Container):
             content=ft.Column(
                 [
                     header_row,
-                    dur_steppers,
-                    seam_steppers,
-                    shift_and_snap_row,
+                    mode_tabs_row,
+                    active_timing_row,
                     actions_row,
                 ],
                 spacing=3,

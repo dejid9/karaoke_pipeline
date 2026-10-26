@@ -149,6 +149,36 @@ class TestMobileTimingEditor(unittest.TestCase):
         self.assertEqual(editor.selected_syllable_id, "L2:S0")
         self.assertTrue(editor.docked_toolbar.visible)
 
+        # Check mode tabs switching
+        self.assertEqual(editor.toolbar_mode, "dur")
+        editor.toolbar_mode = "seam"
+        editor._refresh_ui()
+        self.assertEqual(editor.toolbar_mode, "seam")
+
+        editor.toolbar_mode = "shift"
+        editor._refresh_ui()
+        self.assertEqual(editor.toolbar_mode, "shift")
+
+    def test_audio_timeline_collapse_expand_cycle(self):
+        from ui.components.audio_timeline import AudioTimelineWidget
+        tl = AudioTimelineWidget()
+
+        # Initial state (expanded)
+        tl.collapsed = False
+        tl._refresh_timeline()
+        self.assertTrue(tl.top_controls_row2.visible)
+
+        # Toggle collapse
+        tl._toggle_collapse()
+        self.assertTrue(tl.collapsed)
+        self.assertFalse(tl.top_controls_row2.visible)
+        self.assertFalse(tl.timeline_image.visible)
+
+        # Toggle back to expanded
+        tl._toggle_collapse()
+        self.assertFalse(tl.collapsed)
+        self.assertTrue(tl.top_controls_row2.visible)
+
 
 if __name__ == "__main__":
     unittest.main()

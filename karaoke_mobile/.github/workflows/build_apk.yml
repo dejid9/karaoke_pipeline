@@ -28,7 +28,7 @@ jobs:
       - name: Install dependencies and Flet CLI
         run: |
           python -m pip install --upgrade pip
-          pip install "flet[all]>=1.0.5"
+          pip install "flet[all]>=1.0.5" "flet-audio>=1.0.5"
 
       - name: Build Android APK
         working-directory: karaoke_mobile

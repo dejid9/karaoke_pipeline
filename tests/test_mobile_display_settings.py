@@ -69,6 +69,22 @@ class TestDisplaySettings(unittest.TestCase):
         self.assertEqual(w, 380.0)
         self.assertIsNone(h)
 
+    def test_open_display_settings_dialog_no_crash(self):
+        from ui.display_settings import open_display_settings_dialog
+        import flet as ft
+
+        class MockPage:
+            overlay = []
+            height = 800
+            width = 360
+            def update(self):
+                pass
+
+        page = MockPage()
+        open_display_settings_dialog(page, on_changed=lambda: None)
+        self.assertEqual(len(page.overlay), 1)
+        self.assertIsInstance(page.overlay[0], ft.BottomSheet)
+
 
 if __name__ == "__main__":
     unittest.main()

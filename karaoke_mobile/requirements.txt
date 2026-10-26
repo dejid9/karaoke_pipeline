@@ -1,2 +1,3 @@
 # Mobile Karaoke App dependencies
 flet>=1.0.5
+flet-audio>=1.0.5

@@ -3,17 +3,24 @@
 from __future__ import annotations
 
 import array
+import asyncio
 import base64
 import io
 import math
 import os
 from pathlib import Path
+import re
 import struct
 import tempfile
-from typing import Callable, Optional
+from typing import Callable, Optional, Sequence
 import wave
 
 import flet as ft
+
+try:
+    import flet_audio as fta
+except Exception:
+    fta = None
 
 from core.media import WaveformData, load_waveform, _read_pcm_peaks_python
 from core.spectrogram import SpectrogramData, SpectrogramViewSettings, load_spectrogram
@@ -150,10 +157,30 @@ class AudioTimelineWidget(ft.Container):
         self.audio_picker = ft.FilePicker()
         self.audio_picker.on_result = self._on_audio_picked
 
+        # Native Audio Player
+        self.temp_audio_path: Optional[str] = None
+        self.is_playing: bool = False
+        self._playback_token: int = 0
+        self.audio_player: Optional[ft.Service] = None
+        if fta is not None:
+            try:
+                self.audio_player = fta.Audio(
+                    autoplay=False,
+                    volume=1.0,
+                    on_position_change=self._on_player_position_change,
+                    on_state_change=self._on_player_state_change,
+                )
+            except Exception as ex:
+                print(f"Error initializing flet_audio: {ex}")
+                self.audio_player = None
+
         self._build_ui()
 
     def get_services(self) -> list[ft.Service]:
-        return [self.audio_picker]
+        svcs: list[ft.Service] = [self.audio_picker]
+        if self.audio_player is not None:
+            svcs.append(self.audio_player)
+        return svcs
 
     def _safe_update(self):
         try:
@@ -161,19 +188,164 @@ class AudioTimelineWidget(ft.Container):
         except Exception:
             pass
 
+    def _get_page(self) -> Optional[ft.Page]:
+        p = getattr(self, "_Control__page", None)
+        if p is not None:
+            return p
+        try:
+            return self.page
+        except Exception:
+            return None
+
     def apply_theme(self, pal: ThemePalette):
         self._build_ui()
         self._refresh_timeline()
-        self._safe_update()
+        p = self._get_page()
+        if p:
+            try:
+                p.update()
+            except Exception:
+                self._safe_update()
+        else:
+            self._safe_update()
 
     def _toggle_collapse(self, e=None):
         self.collapsed = not self.collapsed
         ds = get_display_settings()
         ds.timeline_collapsed = self.collapsed
         ds.save()
-        self._build_ui()
+        if hasattr(self, "toggle_collapse_btn"):
+            self.toggle_collapse_btn.icon = ft.Icons.KEYBOARD_ARROW_DOWN if self.collapsed else ft.Icons.KEYBOARD_ARROW_UP
+            self.toggle_collapse_btn.tooltip = "Развернуть" if self.collapsed else "Свернуть"
+        if hasattr(self, "top_controls_row2"):
+            self.top_controls_row2.visible = not self.collapsed
         self._refresh_timeline()
-        self._safe_update()
+        p = self._get_page()
+        if p:
+            try:
+                p.update()
+            except Exception:
+                self._safe_update()
+        else:
+            self._safe_update()
+
+    def toggle_play(self, e=None):
+        """Play/pause continuous playback from center_time playhead."""
+        if not self.audio_player or not self.temp_audio_path:
+            return
+        p = self._get_page()
+        if not p:
+            return
+
+        async def _run():
+            self._playback_token += 1
+            if self.is_playing:
+                self.is_playing = False
+                self._update_play_icon()
+                try:
+                    await self.audio_player.pause()
+                except Exception as ex:
+                    print(f"Pause error: {ex}")
+            else:
+                self.is_playing = True
+                self._update_play_icon()
+                try:
+                    pos_ms = max(0, int(self.center_time * 1000))
+                    await self.audio_player.seek(pos_ms)
+                    await self.audio_player.resume()
+                except Exception as ex:
+                    print(f"Resume error: {ex}")
+                    self.is_playing = False
+                    self._update_play_icon()
+
+        p.run_task(_run)
+
+    def stop_audio(self, e=None):
+        """Stop audio playback and reset playhead."""
+        if not self.audio_player:
+            return
+        p = self._get_page()
+        if not p:
+            return
+
+        async def _run():
+            self._playback_token += 1
+            self.is_playing = False
+            self._update_play_icon()
+            try:
+                await self.audio_player.pause()
+                await self.audio_player.seek(0)
+            except Exception:
+                pass
+
+        p.run_task(_run)
+
+    def play_range(self, start_sec: float, end_sec: float):
+        """Play a specific slice of audio (e.g. syllable or measurement) and auto-pause."""
+        if not self.audio_player or not self.temp_audio_path:
+            return
+        p = self._get_page()
+        if not p:
+            return
+
+        async def _run():
+            self._playback_token += 1
+            token = self._playback_token
+            self.is_playing = True
+            self._update_play_icon()
+            try:
+                pos_ms = max(0, int(start_sec * 1000))
+                await self.audio_player.seek(pos_ms)
+                await self.audio_player.resume()
+                dur = max(0.05, end_sec - start_sec)
+                await asyncio.sleep(dur)
+                if self._playback_token == token:
+                    await self.audio_player.pause()
+            except Exception as ex:
+                print(f"Play range error: {ex}")
+            finally:
+                if self._playback_token == token:
+                    self.is_playing = False
+                    self._update_play_icon()
+
+        p.run_task(_run)
+
+    def _update_play_icon(self):
+        try:
+            if hasattr(self, "play_pause_btn"):
+                self.play_pause_btn.icon = ft.Icons.PAUSE if self.is_playing else ft.Icons.PLAY_ARROW
+                self.play_pause_btn.tooltip = "Пауза" if self.is_playing else "Воспроизвести с курсора"
+                self._safe_update()
+        except Exception:
+            pass
+
+    def _on_player_position_change(self, e):
+        if not self.is_playing:
+            return
+        pos_val = getattr(e, "position", None)
+        if pos_val is not None:
+            if hasattr(pos_val, "total_seconds"):
+                sec = pos_val.total_seconds()
+            elif isinstance(pos_val, (int, float)):
+                sec = pos_val / 1000.0 if pos_val > 100 else float(pos_val)
+            else:
+                try:
+                    sec = float(pos_val) / 1000.0
+                except Exception:
+                    sec = None
+            if sec is not None:
+                self.center_time = round(sec, 3)
+                self._refresh_timeline()
+                self._safe_update()
+                if self.on_time_changed:
+                    self.on_time_changed(self.center_time)
+
+    def _on_player_state_change(self, e):
+        state = getattr(e, "data", None) or getattr(e, "state", None)
+        if state in ("completed", "stopped", "paused"):
+            if self.is_playing:
+                self.is_playing = False
+                self._update_play_icon()
 
     def _build_ui(self):
         pal = get_current_palette()
@@ -264,6 +436,22 @@ class AudioTimelineWidget(ft.Container):
             ),
         )
 
+        # Play / Pause & Stop Buttons
+        self.play_pause_btn = ft.IconButton(
+            icon=ft.Icons.PAUSE if self.is_playing else ft.Icons.PLAY_ARROW,
+            icon_size=ds.icon_size(18),
+            tooltip="Воспроизвести / пауза",
+            icon_color=pal.accent,
+            on_click=self.toggle_play,
+        )
+        self.stop_btn = ft.IconButton(
+            icon=ft.Icons.STOP,
+            icon_size=ds.icon_size(18),
+            tooltip="Остановить",
+            icon_color=pal.fg,
+            on_click=self.stop_audio,
+        )
+
         top_controls_row1 = ft.Row(
             [
                 ft.Row(
@@ -276,6 +464,8 @@ class AudioTimelineWidget(ft.Container):
                 ),
                 ft.Row(
                     [
+                        self.play_pause_btn,
+                        self.stop_btn,
                         self.toggle_collapse_btn,
                         self.open_audio_btn,
                     ],
@@ -286,6 +476,7 @@ class AudioTimelineWidget(ft.Container):
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
+        self.top_controls_row1 = top_controls_row1
 
         top_controls_row2 = ft.Row(
             [
@@ -307,6 +498,7 @@ class AudioTimelineWidget(ft.Container):
             wrap=True,
             visible=not self.collapsed,
         )
+        self.top_controls_row2 = top_controls_row2
 
         # Timeline Image Visualizer wrapped in GestureDetector for tap & pan scrubbing
         self.timeline_image = ft.Image(
@@ -419,9 +611,26 @@ class AudioTimelineWidget(ft.Container):
         elif audio_bytes:
             self._decode_and_set_audio(name, audio_bytes)
 
+        if audio_bytes:
+            self._cache_audio_file(name, audio_bytes)
+
         self._build_ui()
         self._refresh_timeline()
         self._safe_update()
+
+    def _cache_audio_file(self, name: str, data: bytes):
+        try:
+            clean = re.sub(r"[^a-zA-Z0-9_\.-]", "_", name)
+            if not Path(clean).suffix:
+                clean += ".wav"
+            tmp_dir = tempfile.gettempdir()
+            self.temp_audio_path = os.path.join(tmp_dir, f"karaoke_audio_{clean}")
+            with open(self.temp_audio_path, "wb") as fp:
+                fp.write(data)
+            if self.audio_player is not None:
+                self.audio_player.src = self.temp_audio_path
+        except Exception as ex:
+            print(f"Error caching audio for player: {ex}")
 
     def _decode_and_set_audio(self, name: str, data: bytes):
         """Decode audio bytes to WaveformData and optionally SpectrogramData."""
@@ -623,6 +832,13 @@ class AudioTimelineWidget(ft.Container):
             with open(path, "rb") as f:
                 data = f.read()
 
+        if path and os.path.exists(path):
+            self.temp_audio_path = path
+            if self.audio_player is not None:
+                self.audio_player.src = path
+        elif data:
+            self._cache_audio_file(name, data)
+
         if data:
             self._decode_and_set_audio(name, data)
             self.audio_name = name
@@ -637,7 +853,12 @@ class AudioTimelineWidget(ft.Container):
         ds = get_display_settings()
         has_media = self.waveform is not None or self.spectrogram is not None
 
+        if hasattr(self, "top_controls_row2"):
+            self.top_controls_row2.visible = not self.collapsed
+
         if self.collapsed:
+            if hasattr(self, "timeline_gesture"):
+                self.timeline_gesture.visible = False
             self.timeline_image.visible = False
             self.time_labels_row.visible = False
             self.syllable_strip.visible = False
@@ -645,12 +866,16 @@ class AudioTimelineWidget(ft.Container):
             return
 
         if not has_media:
+            if hasattr(self, "timeline_gesture"):
+                self.timeline_gesture.visible = False
             self.timeline_image.visible = False
             self.time_labels_row.visible = False
             self.syllable_strip.visible = False
             self.empty_banner.visible = True
             return
 
+        if hasattr(self, "timeline_gesture"):
+            self.timeline_gesture.visible = True
         self.timeline_image.visible = True
         self.time_labels_row.visible = True
         self.empty_banner.visible = False

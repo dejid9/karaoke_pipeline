@@ -254,9 +254,9 @@ def open_display_settings_dialog(page: ft.Page, on_changed: Callable[[], None]):
             padding=14,
             border_radius=ft.BorderRadius(16, 16, 0, 0),
             border=ft.Border.all(1, pal.border),
-            max_height=500,
+            height=min(520, int(page.height * 0.85)) if (getattr(page, "height", None) and page.height > 200) else 480,
         ),
-        is_scroll_controlled=True,
+        scrollable=True,
     )
 
     page.overlay.append(bs)
