@@ -163,14 +163,17 @@ def main(page: ft.Page):
 
     views = [mfa_view, editor_view, sps_view, burst_view, export_view]
 
-    # Register all view services (Native FilePickers, etc.) in page.services before user interaction
+    # Register all view services (FilePickers) in page.services (NEVER in page.overlay, as Services are not visual controls)
     for v in views:
         if hasattr(v, "get_services"):
             for service in v.get_services():
+                if hasattr(page, "_services") and hasattr(page._services, "register_service"):
+                    try:
+                        page._services.register_service(service)
+                    except Exception:
+                        pass
                 if hasattr(page, "services") and service not in page.services:
                     page.services.append(service)
-                if hasattr(page, "overlay") and service not in page.overlay:
-                    page.overlay.append(service)
 
     # Initial palette apply across all views
     for v in views:
