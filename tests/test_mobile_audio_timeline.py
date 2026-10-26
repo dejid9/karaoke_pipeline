@@ -101,6 +101,83 @@ class TestMobileAudioTimeline(unittest.TestCase):
         rgb = spg._render_rgb_python(0.0, 1.0, 100, 40, view)
         self.assertEqual(len(rgb), 100 * 40 * 3)
 
+    def test_syllables_visualization_and_strip(self):
+        from core.sps import TimelineSyllable
+        clicked_ids = []
+        widget = AudioTimelineWidget(on_syllable_clicked=lambda sid: clicked_ids.append(sid))
+
+        s1 = TimelineSyllable(id="s1", start=0.1, end=0.4, text="Hel")
+        s2 = TimelineSyllable(id="s2", start=0.4, end=0.8, text="lo", burst_marked=True)
+        s3 = TimelineSyllable(id="s3", start=0.8, end=1.2, text="world")
+
+        # Mock audio presence so timeline renders
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(8000)
+            wf.writeframes(array.array("h", [1000] * 8000).tobytes())
+        wfm = load_waveform_from_wav_bytes(buf.getvalue(), bins_per_second=100)
+        widget.set_audio("test.wav", buf.getvalue(), waveform=wfm)
+
+        widget.set_syllables([s1, s2, s3], active_id="s2")
+        self.assertEqual(len(widget.syllables), 3)
+        self.assertEqual(widget.active_syllable_id, "s2")
+        self.assertEqual(widget.active_start, 0.4)
+        self.assertEqual(widget.active_end, 0.8)
+
+        # Check syllable strip
+        self.assertTrue(widget.syllable_strip.visible)
+        self.assertEqual(len(widget.syllable_strip.controls), 3)
+
+        # Click chip for s1
+        widget._handle_syllable_chip_click("s1")
+        self.assertEqual(widget.active_syllable_id, "s1")
+        self.assertEqual(clicked_ids, ["s1"])
+
+    def test_timeline_tap_and_pan_gestures(self):
+        from core.sps import TimelineSyllable
+        clicked_ids = []
+        changed_times = []
+        widget = AudioTimelineWidget(
+            on_syllable_clicked=lambda sid: clicked_ids.append(sid),
+            on_time_changed=lambda t: changed_times.append(t),
+        )
+
+        s1 = TimelineSyllable(id="s1", start=1.0, end=2.0, text="one")
+        s2 = TimelineSyllable(id="s2", start=2.0, end=3.0, text="two")
+
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(8000)
+            wf.writeframes(array.array("h", [1000] * 32000).tobytes())
+        wfm = load_waveform_from_wav_bytes(buf.getvalue(), bins_per_second=100)
+        widget.set_audio("test.wav", buf.getvalue(), waveform=wfm)
+        widget.set_syllables([s1, s2], active_id="s1")
+
+        widget.center_time = 2.0
+        widget.zoom_span = 2.0  # viewport [1.0, 3.0], middle at 2.0
+        widget.render_width = 360
+
+        # Simulate Tap at middle (x=180 -> ratio 0.5 -> time 2.0 -> falls on s2)
+        class MockTap:
+            local_x = 200
+
+        widget._on_timeline_tap(MockTap())
+        self.assertIn("s2", clicked_ids)
+        self.assertTrue(len(changed_times) > 0)
+
+        # Simulate Pan drag (drag left dx=-18 -> pans right)
+        class MockPan:
+            delta_x = -18
+            local_delta = None
+
+        t_before = widget.center_time
+        widget._on_timeline_pan(MockPan())
+        self.assertGreater(widget.center_time, t_before)
+
 
 if __name__ == "__main__":
     unittest.main()

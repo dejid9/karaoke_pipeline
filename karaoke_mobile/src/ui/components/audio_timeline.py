@@ -17,6 +17,7 @@ import flet as ft
 
 from core.media import WaveformData, load_waveform, _read_pcm_peaks_python
 from core.spectrogram import SpectrogramData, SpectrogramViewSettings, load_spectrogram
+from core.sps import TimelineSyllable
 from ui.display_settings import get_display_settings
 from ui.theme import ThemePalette, get_current_palette
 
@@ -117,10 +118,15 @@ class AudioTimelineWidget(ft.Container):
         *,
         on_audio_loaded: Optional[Callable[[str, bytes, Optional[WaveformData], Optional[SpectrogramData]], None]] = None,
         on_time_changed: Optional[Callable[[float], None]] = None,
+        on_syllable_clicked: Optional[Callable[[str], None]] = None,
     ):
         super().__init__()
         self.on_audio_loaded = on_audio_loaded
         self.on_time_changed = on_time_changed
+        self.on_syllable_clicked = on_syllable_clicked
+
+        self.syllables: list[TimelineSyllable] = []
+        self.active_syllable_id: Optional[str] = None
 
         self.waveform: Optional[WaveformData] = None
         self.spectrogram: Optional[SpectrogramData] = None
@@ -302,7 +308,7 @@ class AudioTimelineWidget(ft.Container):
             visible=not self.collapsed,
         )
 
-        # Timeline Image Visualizer
+        # Timeline Image Visualizer wrapped in GestureDetector for tap & pan scrubbing
         self.timeline_image = ft.Image(
             src="",
             fit="fill",
@@ -310,6 +316,20 @@ class AudioTimelineWidget(ft.Container):
             border_radius=6,
             visible=False,
             expand=True,
+        )
+
+        self.timeline_gesture = ft.GestureDetector(
+            content=self.timeline_image,
+            on_tap_down=self._on_timeline_tap,
+            on_pan_update=self._on_timeline_pan,
+        )
+
+        # Interactive Syllables Strip (chips below spectrogram)
+        self.syllable_strip = ft.Row(
+            [],
+            spacing=3,
+            wrap=True,
+            visible=False,
         )
 
         # Time Labels Row under Image
@@ -361,7 +381,8 @@ class AudioTimelineWidget(ft.Container):
                 [
                     top_controls_row1,
                     top_controls_row2,
-                    self.timeline_image,
+                    self.timeline_gesture,
+                    self.syllable_strip,
                     self.time_labels_row,
                     self.empty_banner,
                 ],
@@ -444,17 +465,42 @@ class AudioTimelineWidget(ft.Container):
         except Exception as ex:
             print(f"Error decoding audio {name}: {ex}")
 
+    def set_syllables(
+        self,
+        syllables: Sequence[TimelineSyllable],
+        active_id: Optional[str] = None,
+    ):
+        """Pass all syllables in document/timeline to display boundaries on spectrogram and waveform."""
+        self.syllables = list(syllables)
+        self.active_syllable_id = active_id
+        if active_id:
+            syl = next((s for s in self.syllables if s.id == active_id), None)
+            if syl:
+                self.active_start = syl.start
+                self.active_end = syl.end
+                self.measured_start = getattr(syl, "measured_start", None)
+                self.measured_end = getattr(syl, "measured_end", None)
+        self._refresh_timeline()
+        self._safe_update()
+
     def focus_syllable(
         self,
         start: float,
         end: float,
         meas_start: Optional[float] = None,
         meas_end: Optional[float] = None,
+        syllable_id: Optional[str] = None,
     ):
         self.active_start = start
         self.active_end = end
         self.measured_start = meas_start
         self.measured_end = meas_end
+        if syllable_id:
+            self.active_syllable_id = syllable_id
+        elif self.syllables:
+            match = next((s for s in self.syllables if abs(s.start - start) < 0.001 and abs(s.end - end) < 0.001), None)
+            if match:
+                self.active_syllable_id = match.id
 
         # Center timeline viewport on syllable
         mid = (start + end) / 2.0
@@ -468,13 +514,89 @@ class AudioTimelineWidget(ft.Container):
         end: Optional[float],
         meas_start: Optional[float] = None,
         meas_end: Optional[float] = None,
+        syllable_id: Optional[str] = None,
     ):
         self.active_start = start
         self.active_end = end
         self.measured_start = meas_start
         self.measured_end = meas_end
+        self.active_syllable_id = syllable_id
         self._refresh_timeline()
         self._safe_update()
+
+    def _on_timeline_tap(self, e: ft.TapEvent):
+        width = self.render_width
+        if width <= 0:
+            return
+        local_x = getattr(e, "local_x", None)
+        if local_x is None and hasattr(e, "local_position") and e.local_position:
+            local_x = e.local_position.x
+        if local_x is None:
+            return
+
+        half_span = self.zoom_span / 2.0
+        v_start = max(0.0, self.center_time - half_span)
+        click_ratio = max(0.0, min(1.0, float(local_x) / width))
+        t = round(v_start + click_ratio * self.zoom_span, 3)
+        max_dur = max(self.audio_duration, (self.active_end or 0.0) + 10.0, 10.0)
+        self.center_time = max(0.0, min(max_dur, t))
+
+        # Check if tap landed on any syllable
+        hit_syl = None
+        for s in self.syllables:
+            if s.start <= t <= s.end:
+                hit_syl = s
+                break
+
+        if hit_syl:
+            self.active_syllable_id = hit_syl.id
+            self.active_start = hit_syl.start
+            self.active_end = hit_syl.end
+            self.measured_start = getattr(hit_syl, "measured_start", None)
+            self.measured_end = getattr(hit_syl, "measured_end", None)
+            if self.on_syllable_clicked:
+                self.on_syllable_clicked(hit_syl.id)
+
+        self._refresh_timeline()
+        self._safe_update()
+        if self.on_time_changed:
+            self.on_time_changed(self.center_time)
+
+    def _on_timeline_pan(self, e: ft.DragUpdateEvent):
+        width = self.render_width
+        if width <= 0:
+            return
+        dx = getattr(e, "delta_x", None)
+        if dx is None and hasattr(e, "local_delta") and e.local_delta:
+            dx = e.local_delta.x
+        elif dx is None and hasattr(e, "primary_delta") and e.primary_delta is not None:
+            dx = e.primary_delta
+        if dx is None or dx == 0:
+            return
+
+        delta_sec = - (float(dx) / width) * self.zoom_span
+        max_dur = max(self.audio_duration, (self.active_end or 0.0) + 10.0, 10.0)
+        self.center_time = max(0.0, min(max_dur, self.center_time + delta_sec))
+        self._refresh_timeline()
+        self._safe_update()
+        if self.on_time_changed:
+            self.on_time_changed(self.center_time)
+
+    def _handle_syllable_chip_click(self, sid: str):
+        self.active_syllable_id = sid
+        syl = next((s for s in self.syllables if s.id == sid), None)
+        if syl:
+            self.active_start = syl.start
+            self.active_end = syl.end
+            self.measured_start = getattr(syl, "measured_start", None)
+            self.measured_end = getattr(syl, "measured_end", None)
+            self.center_time = (syl.start + syl.end) / 2.0
+        self._refresh_timeline()
+        self._safe_update()
+        if self.on_syllable_clicked:
+            self.on_syllable_clicked(sid)
+        if self.on_time_changed:
+            self.on_time_changed(self.center_time)
 
     def _change_zoom(self, factor: float):
         self.zoom_span = max(0.5, min(120.0, self.zoom_span * factor))
@@ -512,17 +634,20 @@ class AudioTimelineWidget(ft.Container):
 
     def _refresh_timeline(self):
         pal = get_current_palette()
+        ds = get_display_settings()
         has_media = self.waveform is not None or self.spectrogram is not None
 
         if self.collapsed:
             self.timeline_image.visible = False
             self.time_labels_row.visible = False
+            self.syllable_strip.visible = False
             self.empty_banner.visible = False
             return
 
         if not has_media:
             self.timeline_image.visible = False
             self.time_labels_row.visible = False
+            self.syllable_strip.visible = False
             self.empty_banner.visible = True
             return
 
@@ -551,6 +676,44 @@ class AudioTimelineWidget(ft.Container):
                 ft.Text(fmt_time(t_val), size=9, color=pal.muted)
             )
 
+        # Populate Syllables Strip with visible syllables
+        self.syllable_strip.controls.clear()
+        if self.syllables:
+            visible_syls = [s for s in self.syllables if s.end >= v_start and s.start <= v_end]
+            if visible_syls:
+                self.syllable_strip.visible = True
+                for s in visible_syls:
+                    is_active = (s.id == self.active_syllable_id)
+                    dur_ms = int(round(s.effective_duration * 1000)) if hasattr(s, "effective_duration") else int(round((s.end - s.start) * 1000))
+                    txt = s.text.strip().replace("\n", " ") if hasattr(s, "text") and s.text else "•"
+                    if len(txt) > 8:
+                        txt = txt[:7] + "…"
+
+                    label = f"{txt} ({dur_ms}ms)"
+                    if getattr(s, "burst_marked", False):
+                        label = f"🔥 {label}"
+
+                    chip_bg = pal.accent if is_active else (pal.raised if getattr(s, "measurement_changed", False) else pal.panel)
+                    chip_fg = pal.accent_fg if is_active else pal.fg
+                    chip_border = ft.Border.all(
+                        1.5 if is_active else 1,
+                        pal.accent if is_active else (pal.accent_alt if getattr(s, "measurement_changed", False) else pal.border)
+                    )
+
+                    btn = ft.Container(
+                        content=ft.Text(label, size=ds.font_size(9.5), weight=ft.FontWeight.BOLD if is_active else ft.FontWeight.NORMAL, color=chip_fg),
+                        bgcolor=chip_bg,
+                        border=chip_border,
+                        border_radius=5,
+                        padding=ds.button_padding(4, 2),
+                        on_click=lambda e, sid=s.id: self._handle_syllable_chip_click(sid),
+                    )
+                    self.syllable_strip.controls.append(btn)
+            else:
+                self.syllable_strip.visible = False
+        else:
+            self.syllable_strip.visible = False
+
         # Render BMP Viewport
         try:
             b64_bmp = self._render_viewport_bmp(v_start, v_end, pal)
@@ -574,8 +737,19 @@ class AudioTimelineWidget(ft.Container):
         bg_rgb = hex_to_rgb(pal.canvas, (22, 22, 30))
         center_rgb = hex_to_rgb(pal.border, (50, 50, 70))
         wave_rgb = hex_to_rgb(pal.accent_alt if pal.accent_alt else pal.accent, (0, 230, 118))
+        border_rgb = hex_to_rgb(pal.border, (80, 80, 100))
+        raised_rgb = hex_to_rgb(pal.raised, (40, 40, 55))
+        accent_rgb = hex_to_rgb(pal.accent, (0, 229, 255))
+        accent_alt_rgb = hex_to_rgb(pal.accent_alt if pal.accent_alt else pal.accent, (255, 179, 0))
+        danger_rgb = hex_to_rgb(pal.danger, (255, 75, 75))
         ass_line_rgb = (0, 229, 255)  # Cyan
         meas_line_rgb = (255, 179, 0)  # Amber / Warning
+        cursor_rgb = (255, 235, 59)    # Playhead cursor
+        syl_line_rgb = (
+            min(255, int(bg_rgb[0] * 0.4 + 90)),
+            min(255, int(bg_rgb[1] * 0.4 + 100)),
+            min(255, int(bg_rgb[2] * 0.4 + 130)),
+        )
         tint_rgb = (
             min(255, int(bg_rgb[0] * 0.7 + wave_rgb[0] * 0.3)),
             min(255, int(bg_rgb[1] * 0.7 + wave_rgb[1] * 0.3)),
@@ -589,10 +763,87 @@ class AudioTimelineWidget(ft.Container):
                 return None
             return int(round((t - v_start) / span * (width - 1)))
 
+        top_lane_h = 10
+        top_lane_colors: list[Optional[tuple[int, int, int]]] = [None] * width
+        is_syl_boundary = bytearray(width)
+        is_act_boundary = bytearray(width)
+        is_meas_boundary = bytearray(width)
+        is_active_body = bytearray(width)
+
+        # Mark all visible syllables on the timeline
+        for s in self.syllables:
+            if s.end < v_start or s.start > v_end:
+                continue
+            xs0 = time_to_x(s.start)
+            xs1 = time_to_x(s.end)
+            if xs0 is None or xs1 is None:
+                continue
+
+            if 0 <= xs0 < width:
+                is_syl_boundary[xs0] = 1
+            if 0 <= xs1 < width:
+                is_syl_boundary[xs1] = 1
+
+            x_min = max(0, min(width - 1, min(xs0, xs1)))
+            x_max = max(0, min(width - 1, max(xs0, xs1)))
+
+            is_act = (s.id == self.active_syllable_id) or (
+                self.active_start is not None and abs(s.start - self.active_start) < 0.001
+            )
+            is_burst = getattr(s, "burst_marked", False)
+            is_meas_ch = getattr(s, "measurement_changed", False)
+
+            if is_act:
+                syl_col = accent_rgb
+                for x in range(x_min, x_max + 1):
+                    is_active_body[x] = 1
+            elif is_burst:
+                syl_col = danger_rgb
+            elif is_meas_ch:
+                syl_col = accent_alt_rgb
+            else:
+                syl_col = raised_rgb
+
+            for x in range(x_min, x_max + 1):
+                top_lane_colors[x] = syl_col
+
+            if getattr(s, "measured_start", None) is not None:
+                xm = time_to_x(s.measured_start)
+                if xm is not None and 0 <= xm < width:
+                    is_meas_boundary[xm] = 1
+            if getattr(s, "measured_end", None) is not None:
+                xm = time_to_x(s.measured_end)
+                if xm is not None and 0 <= xm < width:
+                    is_meas_boundary[xm] = 1
+
         x_act_s = time_to_x(self.active_start)
         x_act_e = time_to_x(self.active_end)
         x_meas_s = time_to_x(self.measured_start)
         x_meas_e = time_to_x(self.measured_end)
+
+        # Fallback if no syllables list was set but active_start/end exist
+        if not self.syllables and x_act_s is not None and x_act_e is not None:
+            x_min = max(0, min(width - 1, min(x_act_s, x_act_e)))
+            x_max = max(0, min(width - 1, max(x_act_s, x_act_e)))
+            for x in range(x_min, x_max + 1):
+                is_active_body[x] = 1
+                top_lane_colors[x] = accent_rgb
+
+        for x_val in (x_act_s, x_act_e):
+            if x_val is not None:
+                for off in (-1, 0, 1):
+                    nx = x_val + off
+                    if 0 <= nx < width:
+                        is_act_boundary[nx] = 1
+
+        for x_val in (x_meas_s, x_meas_e):
+            if x_val is not None:
+                for off in (-1, 0, 1):
+                    nx = x_val + off
+                    if 0 <= nx < width:
+                        is_meas_boundary[nx] = 1
+
+        center_x = time_to_x(self.center_time)
 
         use_spectrogram = (self.audio_mode in {"spectrogram", "both"} and self.spectrogram is not None)
         use_waveform = (self.audio_mode in {"waveform", "both"} and self.waveform is not None)
@@ -630,47 +881,61 @@ class AudioTimelineWidget(ft.Container):
             for x in range(width):
                 idx = y * row_stride + x * 3
 
-                # Base Background (Spectrogram or Solid Canvas)
-                if spec_rgb_bytes is not None:
-                    sp_r = spec_rgb_bytes[idx]
-                    sp_g = spec_rgb_bytes[idx + 1]
-                    sp_b = spec_rgb_bytes[idx + 2]
-                    px_r, px_g, px_b = sp_r, sp_g, sp_b
-                else:
-                    is_tinted = (
-                        x_act_s is not None
-                        and x_act_e is not None
-                        and min(x_act_s, x_act_e) <= x <= max(x_act_s, x_act_e)
-                    )
-                    px_r, px_g, px_b = tint_rgb if is_tinted else bg_rgb
-
-                # Center baseline
-                if y == center_y:
-                    px_r = int((px_r + center_rgb[0]) / 2)
-                    px_g = int((px_g + center_rgb[1]) / 2)
-                    px_b = int((px_b + center_rgb[2]) / 2)
-
-                # Waveform amplitude overlay
-                if use_waveform:
-                    yt, yb = col_bounds[x]
-                    if self.audio_mode == "both":
-                        # In "both" mode, draw top and bottom contour lines
-                        if abs(y - yt) <= 1 or abs(y - yb) <= 1:
-                            px_r, px_g, px_b = wave_rgb
+                # Top Syllable Status Lane
+                if y < top_lane_h:
+                    if y == top_lane_h - 1:
+                        px_r, px_g, px_b = border_rgb
+                    elif is_syl_boundary[x]:
+                        px_r, px_g, px_b = border_rgb
                     else:
-                        # In "waveform" mode, draw filled amplitude body
-                        if yt <= y <= yb:
-                            px_r, px_g, px_b = wave_rgb
+                        lane_col = top_lane_colors[x]
+                        if lane_col is not None:
+                            px_r, px_g, px_b = lane_col
+                        elif spec_rgb_bytes is not None:
+                            px_r = spec_rgb_bytes[idx]
+                            px_g = spec_rgb_bytes[idx + 1]
+                            px_b = spec_rgb_bytes[idx + 2]
+                        else:
+                            px_r, px_g, px_b = bg_rgb
+                else:
+                    # Waveform or Spectrogram body
+                    if spec_rgb_bytes is not None:
+                        px_r = spec_rgb_bytes[idx]
+                        px_g = spec_rgb_bytes[idx + 1]
+                        px_b = spec_rgb_bytes[idx + 2]
+                    else:
+                        px_r, px_g, px_b = tint_rgb if is_active_body[x] else bg_rgb
 
-                # Syllable boundaries (2px line for high touch visibility)
-                if x_act_s is not None and abs(x - x_act_s) <= 1:
+                    # Center baseline
+                    if y == center_y:
+                        px_r = int((px_r + center_rgb[0]) / 2)
+                        px_g = int((px_g + center_rgb[1]) / 2)
+                        px_b = int((px_b + center_rgb[2]) / 2)
+
+                    # Waveform amplitude overlay
+                    if use_waveform:
+                        yt, yb = col_bounds[x]
+                        if self.audio_mode == "both":
+                            if abs(y - yt) <= 1 or abs(y - yb) <= 1:
+                                px_r, px_g, px_b = wave_rgb
+                        else:
+                            if yt <= y <= yb:
+                                px_r, px_g, px_b = wave_rgb
+
+                # Syllable boundaries (active cyan > measured amber > general syllable line)
+                if is_act_boundary[x]:
                     px_r, px_g, px_b = ass_line_rgb
-                elif x_act_e is not None and abs(x - x_act_e) <= 1:
-                    px_r, px_g, px_b = ass_line_rgb
-                elif x_meas_s is not None and abs(x - x_meas_s) <= 1:
+                elif is_meas_boundary[x]:
                     px_r, px_g, px_b = meas_line_rgb
-                elif x_meas_e is not None and abs(x - x_meas_e) <= 1:
-                    px_r, px_g, px_b = meas_line_rgb
+                elif is_syl_boundary[x]:
+                    px_r = int(px_r * 0.35 + syl_line_rgb[0] * 0.65)
+                    px_g = int(px_g * 0.35 + syl_line_rgb[1] * 0.65)
+                    px_b = int(px_b * 0.35 + syl_line_rgb[2] * 0.65)
+
+                # Center cursor playhead (dashed line)
+                if center_x is not None and x == center_x and y >= top_lane_h:
+                    if (y // 3) % 2 == 0:
+                        px_r, px_g, px_b = cursor_rgb
 
                 out_rgb[idx] = px_r
                 out_rgb[idx + 1] = px_g

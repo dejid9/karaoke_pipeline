@@ -8,7 +8,7 @@ from typing import Iterable, Mapping, Optional, Sequence
 
 from .ass import (
     AssDocument, AssEvent, KaraokeSyllable, KaraokeTagType,
-    replace_romanization_override, unspoken_spans,
+    format_ass_time, replace_romanization_override, unspoken_spans,
 )
 
 
@@ -646,6 +646,124 @@ def nudge_syllable_duration(
     )
     event.commit()
     return KaraokeEditResult("nudge-duration", (item.id,), (item.start + item.end) / 2)
+
+
+def set_syllable_duration(
+    document: AssDocument,
+    syllable_id: str,
+    duration_cs: int,
+) -> KaraokeEditResult:
+    """Set exact duration for a syllable in centiseconds (1 cs = 10ms)."""
+    item = _selected(document, [syllable_id])[0]
+    new_cs = max(1, int(duration_cs))
+    event = _event_for_line(document, item.event_line_index)
+    replacement = _karaoke_replacement(item, duration_cs=new_cs)
+    event.text = _apply_replacements(
+        event.text,
+        [(item.tag_value_start, item.tag_value_end, replacement)],
+    )
+    event.commit()
+    new_item = _selected(document, [syllable_id])[0]
+    return KaraokeEditResult("set-duration", (new_item.id,), (new_item.start + new_item.end) / 2)
+
+
+def shift_syllable(
+    document: AssDocument,
+    syllable_id: str,
+    delta_cs: int,
+) -> KaraokeEditResult:
+    """Shift a syllable earlier or later along the timeline without changing its duration.
+
+    If adjacent syllables exist in the same ASS line, boundaries with them are redistributed.
+    If it is the first or last syllable in the event line, event.start / event.end are shifted.
+    """
+    if delta_cs == 0:
+        item = _selected(document, [syllable_id])[0]
+        return KaraokeEditResult("shift", (item.id,), (item.start + item.end) / 2)
+
+    item = _selected(document, [syllable_id])[0]
+    event = _event_for_line(document, item.event_line_index)
+    same_line = [s for s in document.karaoke_syllables() if s.event_line_index == item.event_line_index]
+    ord_idx = next((i for i, s in enumerate(same_line) if s.id == item.id), -1)
+    if ord_idx < 0:
+        raise KaraokeEditError("Syllable not found in line")
+
+    prev_s = same_line[ord_idx - 1] if ord_idx > 0 else None
+    next_s = same_line[ord_idx + 1] if ord_idx + 1 < len(same_line) else None
+
+    replacements: list[tuple[int, int, str]] = []
+
+    # 1. Adjust left boundary (with prev_s or event.start)
+    if prev_s is not None:
+        new_prev_cs = prev_s.duration_cs + delta_cs
+        if new_prev_cs < 0:
+            raise KaraokeEditError("Нельзя сдвинуть дальше: длительность предыдущего слога станет отрицательной")
+        replacements.append((
+            prev_s.tag_value_start,
+            prev_s.tag_value_end,
+            _karaoke_replacement(prev_s, duration_cs=new_prev_cs),
+        ))
+    else:
+        new_start = max(0.0, event.start + delta_cs / 100.0)
+        event.start_raw = format_ass_time(new_start)
+
+    # 2. Adjust right boundary (with next_s or event.end)
+    if next_s is not None:
+        new_next_cs = next_s.duration_cs - delta_cs
+        if new_next_cs < 0:
+            raise KaraokeEditError("Нельзя сдвинуть дальше: длительность следующего слога станет отрицательной")
+        replacements.append((
+            next_s.tag_value_start,
+            next_s.tag_value_end,
+            _karaoke_replacement(next_s, duration_cs=new_next_cs),
+        ))
+    else:
+        new_end = max(event.start + 0.01, event.end + delta_cs / 100.0)
+        event.end_raw = format_ass_time(new_end)
+
+    if replacements:
+        event.text = _apply_replacements(event.text, replacements)
+    event.commit()
+
+    new_item = _selected(document, [syllable_id])[0]
+    return KaraokeEditResult("shift", (new_item.id,), (new_item.start + new_item.end) / 2)
+
+
+def set_syllable_start_at_time(
+    document: AssDocument,
+    syllable_id: str,
+    start_time: float,
+) -> KaraokeEditResult:
+    """Snap/set syllable start to exact time in seconds."""
+    item = _selected(document, [syllable_id])[0]
+    same_line = [s for s in document.karaoke_syllables() if s.event_line_index == item.event_line_index]
+    ord_idx = next((i for i, s in enumerate(same_line) if s.id == item.id), -1)
+    prev_s = same_line[ord_idx - 1] if ord_idx > 0 else None
+    if prev_s is not None:
+        return redistribute_boundary(document, prev_s.id, item.id, start_time)
+    else:
+        event = _event_for_line(document, item.event_line_index)
+        clamped_start = max(0.0, float(start_time))
+        event.start_raw = format_ass_time(clamped_start)
+        event.commit()
+        return KaraokeEditResult("snap-start", (item.id,), clamped_start)
+
+
+def set_syllable_end_at_time(
+    document: AssDocument,
+    syllable_id: str,
+    end_time: float,
+) -> KaraokeEditResult:
+    """Snap/set syllable end to exact time in seconds."""
+    item = _selected(document, [syllable_id])[0]
+    same_line = [s for s in document.karaoke_syllables() if s.event_line_index == item.event_line_index]
+    ord_idx = next((i for i, s in enumerate(same_line) if s.id == item.id), -1)
+    next_s = same_line[ord_idx + 1] if ord_idx + 1 < len(same_line) else None
+    if next_s is not None:
+        return redistribute_boundary(document, item.id, next_s.id, end_time)
+    else:
+        new_dur_cs = max(1, int(round((float(end_time) - item.start) * 100.0)))
+        return set_syllable_duration(document, item.id, new_dur_cs)
 
 
 def _split_duration_at_time(item: KaraokeSyllable, boundary_time: float) -> tuple[int, int, float]:

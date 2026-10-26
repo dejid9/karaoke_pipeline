@@ -45,8 +45,11 @@ class SPSView(ft.Container):
         self.selected_syllable_id: Optional[str] = None
         self.min_peak_sps: float = 6.0
 
-        # Audio Timeline (Waveform & Spectrogram)
-        self.audio_timeline = AudioTimelineWidget(on_audio_loaded=self._handle_audio_loaded)
+        # Audio Timeline (Waveform & Spectrogram) with Syllable Selection
+        self.audio_timeline = AudioTimelineWidget(
+            on_audio_loaded=self._handle_audio_loaded,
+            on_syllable_clicked=self.focus_syllable,
+        )
 
         # Measurement Undo/Redo history
         self._meas_undo_stack: list[dict[str, tuple[float, float]]] = []
@@ -88,6 +91,8 @@ class SPSView(ft.Container):
         self._meas_undo_stack.clear()
         self._meas_redo_stack.clear()
         self._recalculate_bursts()
+        if self.timeline:
+            self.audio_timeline.set_syllables(self.timeline.syllables, self.selected_syllable_id)
         self._refresh_ui()
 
     def focus_syllable(self, syllable_id: str):
@@ -142,14 +147,20 @@ class SPSView(ft.Container):
             self.on_measurements_changed(self.timeline)
 
     def _show_snack(self, message: str, is_error: bool = False):
-        if self.page:
-            pal = get_current_palette()
-            self.page.snack_bar = ft.SnackBar(
-                ft.Text(message, color=pal.accent_fg if not is_error else "#ffffff"),
-                bgcolor=pal.danger if is_error else pal.panel,
-            )
-            self.page.snack_bar.open = True
-            self.page.update()
+        try:
+            p = getattr(self, "_Control__page", None)
+            if p is None:
+                p = self.page
+            if p:
+                pal = get_current_palette()
+                p.snack_bar = ft.SnackBar(
+                    ft.Text(message, color=pal.accent_fg if not is_error else "#ffffff"),
+                    bgcolor=pal.danger if is_error else pal.panel,
+                )
+                p.snack_bar.open = True
+                p.update()
+        except Exception:
+            pass
 
     def _build_controls(self):
         pal = get_current_palette()
@@ -308,14 +319,35 @@ class SPSView(ft.Container):
         ds = get_display_settings()
         pad = ds.button_padding(5, 3)
 
+        self.btn_start_cursor = ft.FilledButton(
+            "🎯 Курсор",
+            tooltip="Установить Start равным позиции курсора на спектрограмме",
+            style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.accent, padding=pad),
+            on_click=self._set_start_from_cursor,
+        )
+        self.btn_end_cursor = ft.FilledButton(
+            "🎯 Курсор",
+            tooltip="Установить End равным позиции курсора на спектрограмме",
+            style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.accent, padding=pad),
+            on_click=self._set_end_from_cursor,
+        )
+
         self.nudge_start_minus50 = ft.FilledButton("-50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("start", -0.05))
-        self.nudge_start_minus = ft.FilledButton("-10ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("start", -0.01))
-        self.nudge_start_plus = ft.FilledButton("+10ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("start", 0.01))
+        self.nudge_start_minus10 = ft.FilledButton("-10ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("start", -0.01))
+        self.nudge_start_minus5 = ft.FilledButton("-5ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("start", -0.005))
+        self.nudge_start_minus1 = ft.FilledButton("-1ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("start", -0.001))
+        self.nudge_start_plus1 = ft.FilledButton("+1ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("start", 0.001))
+        self.nudge_start_plus5 = ft.FilledButton("+5ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("start", 0.005))
+        self.nudge_start_plus10 = ft.FilledButton("+10ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("start", 0.01))
         self.nudge_start_plus50 = ft.FilledButton("+50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("start", 0.05))
 
         self.nudge_end_minus50 = ft.FilledButton("-50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("end", -0.05))
-        self.nudge_end_minus = ft.FilledButton("-10ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("end", -0.01))
-        self.nudge_end_plus = ft.FilledButton("+10ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("end", 0.01))
+        self.nudge_end_minus10 = ft.FilledButton("-10ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("end", -0.01))
+        self.nudge_end_minus5 = ft.FilledButton("-5ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("end", -0.005))
+        self.nudge_end_minus1 = ft.FilledButton("-1ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("end", -0.001))
+        self.nudge_end_plus1 = ft.FilledButton("+1ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("end", 0.001))
+        self.nudge_end_plus5 = ft.FilledButton("+5ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("end", 0.005))
+        self.nudge_end_plus10 = ft.FilledButton("+10ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("end", 0.01))
         self.nudge_end_plus50 = ft.FilledButton("+50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("end", 0.05))
 
         sps_hint = ft.Text(
@@ -328,14 +360,20 @@ class SPSView(ft.Container):
             [
                 ft.Text("Start:", size=13, weight=ft.FontWeight.BOLD, color=pal.fg, width=42),
                 ft.Container(content=self.meas_start_field, expand=True),
+                self.btn_start_cursor,
             ],
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=4,
         )
         start_row_steppers = ft.Row(
             [
                 self.nudge_start_minus50,
-                self.nudge_start_minus,
-                self.nudge_start_plus,
+                self.nudge_start_minus10,
+                self.nudge_start_minus5,
+                self.nudge_start_minus1,
+                self.nudge_start_plus1,
+                self.nudge_start_plus5,
+                self.nudge_start_plus10,
                 self.nudge_start_plus50,
             ],
             spacing=3,
@@ -346,14 +384,20 @@ class SPSView(ft.Container):
             [
                 ft.Text("End:  ", size=13, weight=ft.FontWeight.BOLD, color=pal.fg, width=42),
                 ft.Container(content=self.meas_end_field, expand=True),
+                self.btn_end_cursor,
             ],
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=4,
         )
         end_row_steppers = ft.Row(
             [
                 self.nudge_end_minus50,
-                self.nudge_end_minus,
-                self.nudge_end_plus,
+                self.nudge_end_minus10,
+                self.nudge_end_minus5,
+                self.nudge_end_minus1,
+                self.nudge_end_plus1,
+                self.nudge_end_plus5,
+                self.nudge_end_plus10,
                 self.nudge_end_plus50,
             ],
             spacing=3,
@@ -485,6 +529,10 @@ class SPSView(ft.Container):
         else:
             for b in self.bursts:
                 self.burst_list_column.controls.append(self._build_burst_card(b))
+
+        # Sync syllables with audio timeline visualizer
+        if self.timeline and self.timeline.syllables:
+            self.audio_timeline.set_syllables(self.timeline.syllables, self.selected_syllable_id)
 
         # Rebuild selected syllables chips
         self._refresh_syllable_chips()
@@ -634,7 +682,39 @@ class SPSView(ft.Container):
         self.meas_end_field.value = f"{syl.effective_end:.3f}"
         meas_st = syl.effective_start if syl.measurement_changed else None
         meas_en = syl.effective_end if syl.measurement_changed else None
-        self.audio_timeline.focus_syllable(syl.start, syl.end, meas_st, meas_en)
+        self.audio_timeline.focus_syllable(syl.start, syl.end, meas_st, meas_en, syl.id)
+
+    def _set_start_from_cursor(self, e):
+        if not self.timeline or not self.selected_syllable_id:
+            return
+        lookup = {s.id: s for s in self.timeline.syllables}
+        s = lookup.get(self.selected_syllable_id)
+        if not s:
+            return
+        cur_t = round(self.audio_timeline.center_time, 3)
+        self._push_meas_undo()
+        self.timeline.set_measurement(self.selected_syllable_id, cur_t, s.effective_end)
+        self._recalculate_bursts()
+        self._refresh_ui()
+        if self.on_measurements_changed:
+            self.on_measurements_changed(self.timeline)
+        self._show_snack(f"Start установлен по курсору: {cur_t:.3f}с")
+
+    def _set_end_from_cursor(self, e):
+        if not self.timeline or not self.selected_syllable_id:
+            return
+        lookup = {s.id: s for s in self.timeline.syllables}
+        s = lookup.get(self.selected_syllable_id)
+        if not s:
+            return
+        cur_t = round(self.audio_timeline.center_time, 3)
+        self._push_meas_undo()
+        self.timeline.set_measurement(self.selected_syllable_id, s.effective_start, cur_t)
+        self._recalculate_bursts()
+        self._refresh_ui()
+        if self.on_measurements_changed:
+            self.on_measurements_changed(self.timeline)
+        self._show_snack(f"End установлен по курсору: {cur_t:.3f}с")
 
     def _on_meas_apply(self, e):
         if not self.timeline or not self.selected_syllable_id:
