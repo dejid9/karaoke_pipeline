@@ -14,6 +14,7 @@ from core.media import WaveformData, load_waveform
 from core.project_bundle import ProjectBundle
 from core.spectrogram import SpectrogramData, load_spectrogram
 from core.sps import MeasurementTimeline
+from ui.display_settings import get_display_settings, open_display_settings_dialog
 from ui.theme import (
     DEFAULT_THEME,
     apply_mobile_theme,
@@ -292,19 +293,27 @@ def main(page: ft.Page):
         items=theme_menu_items,
     )
 
+    settings_btn = ft.IconButton(
+        icon=ft.Icons.TUNE,
+        tooltip="Настройки экрана, DPI и панелей",
+        icon_color=pal.accent,
+        on_click=lambda e: open_display_settings_dialog(page, update_layout),
+    )
+
     app_icon = ft.Icon(ft.Icons.MIC, color=pal.accent, size=20)
-    app_title = ft.Text("Karaoke Mobile", size=17, weight=ft.FontWeight.BOLD, color=pal.fg)
+    app_title = ft.Text("Karaoke Mobile", size=16, weight=ft.FontWeight.BOLD, color=pal.fg)
 
     top_bar = ft.Container(
         content=ft.Row(
             [
-                ft.Row([app_icon, app_title], spacing=8),
-                theme_btn,
+                ft.Row([app_icon, app_title], spacing=6),
+                ft.Row([theme_btn, settings_btn], spacing=0, tight=True),
             ],
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
         ),
         bgcolor=pal.panel,
-        padding=ft.Padding(14, 8, 14, 8),
+        padding=ft.Padding(12, 6, 12, 6),
         border=ft.Border(bottom=ft.BorderSide(1, pal.border)),
     )
 
@@ -343,13 +352,110 @@ def main(page: ft.Page):
         ],
     )
 
+    def switch_nav_tab(target_idx: int):
+        nav_bar.selected_index = target_idx
+        cur_pal = get_current_palette()
+        if target_idx == 2 and current_document:
+            sps_view.set_document(current_document, current_timeline)
+        elif target_idx == 1 and current_document:
+            editor_view._refresh_ui()
+
+        if hasattr(views[target_idx], "apply_theme"):
+            views[target_idx].apply_theme(cur_pal)
+        page_container.content = views[target_idx]
+        page.update()
+
+    def open_quick_nav_modal(e=None):
+        cur_pal = get_current_palette()
+
+        def _pick(idx):
+            bs.open = False
+            page.update()
+            switch_nav_tab(idx)
+
+        bs = ft.BottomSheet(
+            content=ft.Container(
+                content=ft.Column(
+                    [
+                        ft.Text("Разделы приложения", size=15, weight=ft.FontWeight.BOLD, color=cur_pal.fg),
+                        ft.ListTile(leading=ft.Icon(ft.Icons.CLOUD, color=cur_pal.accent), title=ft.Text("Colab MFA", color=cur_pal.fg), on_click=lambda e: _pick(0)),
+                        ft.ListTile(leading=ft.Icon(ft.Icons.EDIT, color=cur_pal.accent), title=ft.Text("Редактор караоке", color=cur_pal.fg), on_click=lambda e: _pick(1)),
+                        ft.ListTile(leading=ft.Icon(ft.Icons.SPEED, color=cur_pal.accent), title=ft.Text("Точный SPS", color=cur_pal.fg), on_click=lambda e: _pick(2)),
+                        ft.ListTile(leading=ft.Icon(ft.Icons.AUTO_AWESOME, color=cur_pal.accent), title=ft.Text("Параметры бёрста", color=cur_pal.fg), on_click=lambda e: _pick(3)),
+                        ft.ListTile(leading=ft.Icon(ft.Icons.FOLDER_ZIP, color=cur_pal.accent), title=ft.Text("Пакет проекта", color=cur_pal.fg), on_click=lambda e: _pick(4)),
+                    ],
+                    tight=True,
+                    spacing=2,
+                ),
+                bgcolor=cur_pal.panel,
+                padding=12,
+                border_radius=ft.BorderRadius(16, 16, 0, 0),
+            )
+        )
+        page.overlay.append(bs)
+        bs.open = True
+        page.update()
+
+    floating_nav_btn = ft.FloatingActionButton(
+        icon=ft.Icons.MENU,
+        tooltip="Меню разделов (нижняя панель скрыта)",
+        mini=True,
+        on_click=open_quick_nav_modal,
+        visible=False,
+    )
+    page.floating_action_button = floating_nav_btn
+
+    def update_layout(e=None):
+        ds = get_display_settings()
+        cur_pal = get_current_palette()
+        is_landscape = bool(page.width and page.height and page.width > page.height)
+
+        # 1. Top and Bottom bar visibility
+        top_bar.visible = not ds.hide_top_bar
+        nav_bar.visible = not ds.hide_bottom_bar
+        floating_nav_btn.visible = ds.hide_bottom_bar
+
+        # 2. Landscape and compact bars
+        if is_landscape and ds.compact_landscape:
+            top_bar.padding = ft.Padding(10, 4, 10, 4)
+            app_title.size = ds.font_size(12)
+            app_icon.size = ds.icon_size(16)
+            nav_bar.height = 42
+            nav_bar.label_behavior = ft.NavigationBarLabelBehavior.ALWAYS_HIDE
+        else:
+            top_bar.padding = ft.Padding(12, 6, 12, 6)
+            app_title.size = ds.font_size(16)
+            app_icon.size = ds.icon_size(20)
+            nav_bar.height = 68
+            nav_bar.label_behavior = ft.NavigationBarLabelBehavior.ALWAYS_SHOW
+
+        # 3. Aspect Ratio and Max Bounds
+        max_w, max_h = ds.compute_bounds(page.width, page.height)
+        page_container.width = max_w
+        page_container.height = max_h
+
+        # 4. Propagate theme and scale to active view
+        idx = nav_bar.selected_index
+        if hasattr(views[idx], "apply_theme"):
+            views[idx].apply_theme(cur_pal)
+
+        page.update()
+
+    page.on_resize = update_layout
+
+    centered_body = ft.Container(
+        content=page_container,
+        alignment=ft.Alignment.CENTER,
+        expand=True,
+    )
+
     # Wrapped in SafeArea so Android status bar (clock/notch/battery) never overlaps the app
     page.add(
         ft.SafeArea(
             content=ft.Column(
                 [
                     top_bar,
-                    page_container,
+                    centered_body,
                     nav_bar,
                 ],
                 expand=True,
@@ -360,6 +466,9 @@ def main(page: ft.Page):
             avoid_intrusions_bottom=True,
         )
     )
+
+    # Initial layout calculation
+    update_layout()
 
 
 if __name__ == "__main__":

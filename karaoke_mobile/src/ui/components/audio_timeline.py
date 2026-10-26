@@ -17,6 +17,7 @@ import flet as ft
 
 from core.media import WaveformData, load_waveform, _read_pcm_peaks_python
 from core.spectrogram import SpectrogramData, SpectrogramViewSettings, load_spectrogram
+from ui.display_settings import get_display_settings
 from ui.theme import ThemePalette, get_current_palette
 
 
@@ -135,8 +136,9 @@ class AudioTimelineWidget(ft.Container):
         self.measured_start: Optional[float] = None
         self.measured_end: Optional[float] = None
 
-        self.render_width: int = 360
-        self.render_height: int = 80
+        self.collapsed: bool = get_display_settings().timeline_collapsed
+        self.render_width: int = 320
+        self.render_height: int = get_display_settings().timeline_height(80)
 
         # Native Audio FilePicker
         self.audio_picker = ft.FilePicker()
@@ -150,7 +152,7 @@ class AudioTimelineWidget(ft.Container):
     def _safe_update(self):
         try:
             self.update()
-        except RuntimeError:
+        except Exception:
             pass
 
     def apply_theme(self, pal: ThemePalette):
@@ -158,20 +160,31 @@ class AudioTimelineWidget(ft.Container):
         self._refresh_timeline()
         self._safe_update()
 
+    def _toggle_collapse(self, e=None):
+        self.collapsed = not self.collapsed
+        ds = get_display_settings()
+        ds.timeline_collapsed = self.collapsed
+        ds.save()
+        self._build_ui()
+        self._refresh_timeline()
+        self._safe_update()
+
     def _build_ui(self):
         pal = get_current_palette()
+        ds = get_display_settings()
+        self.render_height = ds.timeline_height(80)
 
         # Top Bar: Audio Title, Time Span, Mode Switcher, Zoom & Pan
         self.audio_name_text = ft.Text(
             self.audio_name if self.audio_name else "Аудио не загружено",
-            size=12,
+            size=ds.font_size(11),
             weight=ft.FontWeight.BOLD,
             color=pal.fg if self.waveform or self.spectrogram else pal.muted,
             max_lines=1,
             overflow=ft.TextOverflow.ELLIPSIS,
         )
 
-        self.time_span_text = ft.Text("00:00.0 - 00:06.0", size=10, color=pal.muted)
+        self.time_span_text = ft.Text("00:00.0 - 00:06.0", size=ds.font_size(9.5), color=pal.muted)
 
         # Mode Buttons
         def make_mode_btn(label: str, mode_val: str):
@@ -181,7 +194,7 @@ class AudioTimelineWidget(ft.Container):
                 style=ft.ButtonStyle(
                     bgcolor=pal.accent if is_active else pal.raised,
                     color=pal.accent_fg if is_active else pal.muted,
-                    padding=ft.Padding(6, 3, 6, 3),
+                    padding=ds.button_padding(5, 2),
                     shape=ft.RoundedRectangleBorder(radius=6),
                 ),
                 on_click=lambda e: self.set_audio_mode(mode_val),
@@ -191,17 +204,26 @@ class AudioTimelineWidget(ft.Container):
         self.mode_spec_btn = make_mode_btn("Спектр", "spectrogram")
         self.mode_both_btn = make_mode_btn("Оба", "both")
 
+        # Collapse / Expand button
+        self.toggle_collapse_btn = ft.IconButton(
+            icon=ft.Icons.KEYBOARD_ARROW_DOWN if self.collapsed else ft.Icons.KEYBOARD_ARROW_UP,
+            icon_size=ds.icon_size(18),
+            tooltip="Свернуть / развернуть таймлайн",
+            icon_color=pal.accent,
+            on_click=self._toggle_collapse,
+        )
+
         # Zoom Buttons
         self.zoom_out_btn = ft.IconButton(
             icon=ft.Icons.ZOOM_OUT,
-            icon_size=18,
+            icon_size=ds.icon_size(17),
             tooltip="Отдалить (увеличить диапазон)",
             icon_color=pal.fg,
             on_click=lambda e: self._change_zoom(1.5),
         )
         self.zoom_in_btn = ft.IconButton(
             icon=ft.Icons.ZOOM_IN,
-            icon_size=18,
+            icon_size=ds.icon_size(17),
             tooltip="Приблизить (детальнее)",
             icon_color=pal.fg,
             on_click=lambda e: self._change_zoom(0.67),
@@ -210,14 +232,14 @@ class AudioTimelineWidget(ft.Container):
         # Pan Buttons
         self.pan_left_btn = ft.IconButton(
             icon=ft.Icons.CHEVRON_LEFT,
-            icon_size=18,
+            icon_size=ds.icon_size(17),
             tooltip="Сдвинуть влево (-1с)",
             icon_color=pal.fg,
             on_click=lambda e: self._pan(-1.0),
         )
         self.pan_right_btn = ft.IconButton(
             icon=ft.Icons.CHEVRON_RIGHT,
-            icon_size=18,
+            icon_size=ds.icon_size(17),
             tooltip="Сдвинуть вправо (+1с)",
             icon_color=pal.fg,
             on_click=lambda e: self._pan(1.0),
@@ -226,7 +248,7 @@ class AudioTimelineWidget(ft.Container):
         # Audio Open Button
         self.open_audio_btn = ft.IconButton(
             icon=ft.Icons.AUDIO_FILE,
-            icon_size=18,
+            icon_size=ds.icon_size(17),
             tooltip="Загрузить аудио (.wav, .mp3, .wfm, .spg)",
             icon_color=pal.accent,
             action=ft.PickFiles(
@@ -238,15 +260,30 @@ class AudioTimelineWidget(ft.Container):
 
         top_controls_row1 = ft.Row(
             [
-                ft.Row([ft.Icon(ft.Icons.MUSIC_NOTE, size=16, color=pal.accent), self.audio_name_text], spacing=4, expand=True),
-                self.open_audio_btn,
+                ft.Row(
+                    [
+                        ft.Icon(ft.Icons.MUSIC_NOTE, size=ds.icon_size(15), color=pal.accent),
+                        self.audio_name_text,
+                    ],
+                    spacing=3,
+                    expand=True,
+                ),
+                ft.Row(
+                    [
+                        self.toggle_collapse_btn,
+                        self.open_audio_btn,
+                    ],
+                    spacing=0,
+                    tight=True,
+                ),
             ],
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
         top_controls_row2 = ft.Row(
             [
-                ft.Row([self.mode_wave_btn, self.mode_spec_btn, self.mode_both_btn], spacing=4),
+                ft.Row([self.mode_wave_btn, self.mode_spec_btn, self.mode_both_btn], spacing=3),
                 self.time_span_text,
                 ft.Row(
                     [
@@ -261,6 +298,8 @@ class AudioTimelineWidget(ft.Container):
             ],
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            wrap=True,
+            visible=not self.collapsed,
         )
 
         # Timeline Image Visualizer
@@ -270,6 +309,7 @@ class AudioTimelineWidget(ft.Container):
             height=self.render_height,
             border_radius=6,
             visible=False,
+            expand=True,
         )
 
         # Time Labels Row under Image
@@ -283,21 +323,19 @@ class AudioTimelineWidget(ft.Container):
         self.empty_banner = ft.Container(
             content=ft.Row(
                 [
-                    ft.Icon(ft.Icons.GRAPHIC_EQ, size=24, color=pal.muted),
-                    ft.Column(
+                    ft.Row(
                         [
-                            ft.Text("Вейвформа и спектрограмма", size=12, weight=ft.FontWeight.BOLD, color=pal.muted),
-                            ft.Text("Нажмите 🎵 чтобы открыть аудиофайл (.wav/.mp3) или проект", size=10, color=pal.muted),
+                            ft.Icon(ft.Icons.GRAPHIC_EQ, size=20, color=pal.muted),
+                            ft.Text("Вейвформа / спектрограмма", size=ds.font_size(11), weight=ft.FontWeight.BOLD, color=pal.muted),
                         ],
-                        spacing=1,
-                        expand=True,
+                        spacing=4,
                     ),
                     ft.FilledButton(
                         "🎵 Открыть",
                         style=ft.ButtonStyle(
                             bgcolor=pal.raised,
                             color=pal.fg,
-                            padding=ft.Padding(8, 4, 8, 4),
+                            padding=ds.button_padding(6, 3),
                             shape=ft.RoundedRectangleBorder(radius=6),
                         ),
                         action=ft.PickFiles(
@@ -309,11 +347,13 @@ class AudioTimelineWidget(ft.Container):
                 ],
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                wrap=True,
             ),
             bgcolor=pal.panel,
-            padding=ft.Padding(10, 8, 10, 8),
+            padding=ft.Padding(8, 6, 8, 6),
             border_radius=8,
             border=ft.Border.all(1, pal.border),
+            visible=not self.collapsed,
         )
 
         self.content = ft.Container(
@@ -325,7 +365,7 @@ class AudioTimelineWidget(ft.Container):
                     self.time_labels_row,
                     self.empty_banner,
                 ],
-                spacing=4,
+                spacing=3,
             ),
             bgcolor=pal.raised,
             padding=8,
@@ -474,6 +514,12 @@ class AudioTimelineWidget(ft.Container):
         pal = get_current_palette()
         has_media = self.waveform is not None or self.spectrogram is not None
 
+        if self.collapsed:
+            self.timeline_image.visible = False
+            self.time_labels_row.visible = False
+            self.empty_banner.visible = False
+            return
+
         if not has_media:
             self.timeline_image.visible = False
             self.time_labels_row.visible = False
@@ -514,6 +560,15 @@ class AudioTimelineWidget(ft.Container):
 
     def _render_viewport_bmp(self, v_start: float, v_end: float, pal: ThemePalette) -> str:
         width = self.render_width
+        try:
+            p = getattr(self, "_Control__page", None)
+            if p is None:
+                p = self.page
+            if p and getattr(p, "width", None):
+                width = max(240, min(1200, int(p.width - 32)))
+                self.render_width = width
+        except Exception:
+            pass
         height = self.render_height
 
         bg_rgb = hex_to_rgb(pal.canvas, (22, 22, 30))

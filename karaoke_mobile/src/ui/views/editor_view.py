@@ -21,6 +21,7 @@ from core.editor import (
     uncolour_burst,
 )
 from ui.components.audio_timeline import AudioTimelineWidget
+from ui.display_settings import get_display_settings
 from ui.theme import ThemePalette, get_current_palette
 
 
@@ -449,20 +450,31 @@ class EditorView(ft.Container):
             except Exception as ex:
                 self._show_snack(f"Ошибка сдвига границы: {ex}", is_error=True)
 
-        timing_row = ft.Row(
+        ds = get_display_settings()
+        pad = ds.button_padding(5, 3)
+        fsize = ds.font_size(11)
+
+        dur_steppers = ft.Row(
             [
-                ft.Text("Длит:", size=11, weight=ft.FontWeight.BOLD, color=pal.muted),
-                ft.FilledButton("-50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: _nudge_dur(-5)),
-                ft.FilledButton("-10ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: _nudge_dur(-1)),
-                ft.FilledButton("+10ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: _nudge_dur(1)),
-                ft.FilledButton("+50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: _nudge_dur(5)),
-                ft.VerticalDivider(width=4),
-                ft.Text("Шов:", size=11, weight=ft.FontWeight.BOLD, color=pal.muted),
-                ft.FilledButton("⇥ -10ms", disabled=not next_s, style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: _nudge_boundary(-1)),
-                ft.FilledButton("+10ms ⇤", disabled=not next_s, style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: _nudge_boundary(1)),
+                ft.Text("Длит:", size=fsize, weight=ft.FontWeight.BOLD, color=pal.muted),
+                ft.FilledButton("-50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _nudge_dur(-5)),
+                ft.FilledButton("-10ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _nudge_dur(-1)),
+                ft.FilledButton("+10ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _nudge_dur(1)),
+                ft.FilledButton("+50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _nudge_dur(5)),
             ],
+            spacing=3,
             wrap=True,
-            spacing=4,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+        seam_steppers = ft.Row(
+            [
+                ft.Text("Шов: ", size=fsize, weight=ft.FontWeight.BOLD, color=pal.muted),
+                ft.FilledButton("⇥ -10ms", disabled=not next_s, style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _nudge_boundary(-1)),
+                ft.FilledButton("+10ms ⇤", disabled=not next_s, style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _nudge_boundary(1)),
+            ],
+            spacing=3,
+            wrap=True,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
@@ -533,38 +545,39 @@ class EditorView(ft.Container):
 
         actions_row = ft.Row(
             [
-                ft.FilledButton("✏ Текст", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(8, 5, 8, 5)), on_click=lambda e: self._open_text_dialog(s)),
+                ft.FilledButton("✏ Текст", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=pad), on_click=lambda e: self._open_text_dialog(s)),
                 ft.FilledButton(
                     "Снять 🔥" if is_burst else "🔥 Бёрст",
                     style=ft.ButtonStyle(
                         bgcolor=pal.panel if is_burst else pal.danger,
                         color=pal.fg if is_burst else pal.accent_fg,
-                        padding=ft.Padding(8, 5, 8, 5),
+                        padding=pad,
                     ),
                     on_click=_toggle_burst,
                 ),
-                ft.FilledButton("✂ Резать", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(7, 5, 7, 5)), on_click=_split),
-                ft.FilledButton("🔗 Слить", disabled=not next_s, style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(7, 5, 7, 5)), on_click=_merge),
-                ft.FilledButton("➕ Вставить", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(7, 5, 7, 5)), on_click=_insert),
-                ft.FilledButton("🗑", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.danger, padding=ft.Padding(8, 5, 8, 5)), on_click=_delete),
-                ft.FilledButton("🎯 В SPS", style=ft.ButtonStyle(bgcolor=pal.accent, color=pal.accent_fg, padding=ft.Padding(8, 5, 8, 5)), on_click=lambda e: self._transfer_to_sps()),
+                ft.FilledButton("✂ Резать", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=pad), on_click=_split),
+                ft.FilledButton("🔗 Слить", disabled=not next_s, style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=pad), on_click=_merge),
+                ft.FilledButton("➕ Вставить", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=pad), on_click=_insert),
+                ft.FilledButton("🗑", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.danger, padding=pad), on_click=_delete),
+                ft.FilledButton("🎯 В SPS", style=ft.ButtonStyle(bgcolor=pal.accent, color=pal.accent_fg, padding=pad), on_click=lambda e: self._transfer_to_sps()),
             ],
             wrap=True,
-            spacing=4,
+            spacing=3,
         )
 
         self.docked_toolbar.content = ft.Container(
             content=ft.Column(
                 [
                     header_row,
-                    timing_row,
+                    dur_steppers,
+                    seam_steppers,
                     actions_row,
                 ],
-                spacing=5,
+                spacing=3,
             ),
             bgcolor=pal.raised,
-            padding=8,
-            border_radius=10,
+            padding=6,
+            border_radius=8,
             border=ft.Border.all(1.5, pal.accent),
         )
 

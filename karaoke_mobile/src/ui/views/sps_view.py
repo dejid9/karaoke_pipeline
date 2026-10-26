@@ -16,6 +16,7 @@ from core.measurements import (
 )
 from core.sps import BurstCandidate, MeasurementTimeline, detect_bursts
 from ui.components.audio_timeline import AudioTimelineWidget
+from ui.display_settings import get_display_settings
 from ui.theme import ThemePalette, get_current_palette
 
 
@@ -304,15 +305,18 @@ class SPSView(ft.Container):
         self.prev_syl_btn = ft.FilledButton("◀ Пред", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(8, 5, 8, 5)), on_click=lambda e: self._nav_syllable(-1))
         self.next_syl_btn = ft.FilledButton("След ▶", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(8, 5, 8, 5)), on_click=lambda e: self._nav_syllable(1))
 
-        self.nudge_start_minus50 = ft.FilledButton("-50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(5, 4, 5, 4)), on_click=lambda e: self._nudge("start", -0.05))
-        self.nudge_start_minus = ft.FilledButton("-10ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: self._nudge("start", -0.01))
-        self.nudge_start_plus = ft.FilledButton("+10ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: self._nudge("start", 0.01))
-        self.nudge_start_plus50 = ft.FilledButton("+50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(5, 4, 5, 4)), on_click=lambda e: self._nudge("start", 0.05))
+        ds = get_display_settings()
+        pad = ds.button_padding(5, 3)
 
-        self.nudge_end_minus50 = ft.FilledButton("-50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(5, 4, 5, 4)), on_click=lambda e: self._nudge("end", -0.05))
-        self.nudge_end_minus = ft.FilledButton("-10ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: self._nudge("end", -0.01))
-        self.nudge_end_plus = ft.FilledButton("+10ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(6, 4, 6, 4)), on_click=lambda e: self._nudge("end", 0.01))
-        self.nudge_end_plus50 = ft.FilledButton("+50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ft.Padding(5, 4, 5, 4)), on_click=lambda e: self._nudge("end", 0.05))
+        self.nudge_start_minus50 = ft.FilledButton("-50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("start", -0.05))
+        self.nudge_start_minus = ft.FilledButton("-10ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("start", -0.01))
+        self.nudge_start_plus = ft.FilledButton("+10ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("start", 0.01))
+        self.nudge_start_plus50 = ft.FilledButton("+50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("start", 0.05))
+
+        self.nudge_end_minus50 = ft.FilledButton("-50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("end", -0.05))
+        self.nudge_end_minus = ft.FilledButton("-10ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("end", -0.01))
+        self.nudge_end_plus = ft.FilledButton("+10ms", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("end", 0.01))
+        self.nudge_end_plus50 = ft.FilledButton("+50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: self._nudge("end", 0.05))
 
         sps_hint = ft.Text(
             "Start и End независимы: End можно поставить раньше Start (отрицательная длительность для опережающего пения).",
@@ -334,7 +338,8 @@ class SPSView(ft.Container):
                 self.nudge_start_plus,
                 self.nudge_start_plus50,
             ],
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            spacing=3,
+            wrap=True,
         )
 
         end_row_input = ft.Row(
@@ -351,7 +356,8 @@ class SPSView(ft.Container):
                 self.nudge_end_plus,
                 self.nudge_end_plus50,
             ],
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            spacing=3,
+            wrap=True,
         )
 
         meas_editor_card = ft.Container(
