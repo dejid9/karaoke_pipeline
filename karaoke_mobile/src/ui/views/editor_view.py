@@ -47,7 +47,9 @@ class EditorView(ft.Container):
         self.on_audio_loaded_cb = on_audio_loaded
 
         self.document: Optional[AssDocument] = None
-        self.selected_syllable_id: Optional[str] = None
+        self._selected_syllable_ids: list[str] = []
+        self.multi_select_mode: bool = False
+        self._page: Optional[ft.Page] = None
         self.ass_picker = ft.FilePicker(on_result=self._on_ass_picked)
 
         # Audio Timeline (Waveform & Spectrogram) with Syllable Selection
@@ -61,6 +63,86 @@ class EditorView(ft.Container):
         self._redo_stack: list[str] = []
 
         self._build_controls()
+
+    @property
+    def selected_syllable_id(self) -> Optional[str]:
+        return self._selected_syllable_ids[0] if self._selected_syllable_ids else None
+
+    @selected_syllable_id.setter
+    def selected_syllable_id(self, val: Optional[str]):
+        self._selected_syllable_ids = [val] if val else []
+
+    @property
+    def selected_syllable_ids(self) -> list[str]:
+        return self._selected_syllable_ids
+
+    @selected_syllable_ids.setter
+    def selected_syllable_ids(self, val: list[str]):
+        self._selected_syllable_ids = list(val)
+
+    def set_page(self, page: ft.Page):
+        self._page = page
+        if hasattr(self, "audio_timeline"):
+            self.audio_timeline._page = page
+
+    def _get_page(self) -> Optional[ft.Page]:
+        if getattr(self, "_page", None):
+            return self._page
+        try:
+            if self.page:
+                return self.page
+        except Exception:
+            pass
+        return getattr(self, "_Control__page", None)
+
+    def _open_dialog(self, dialog: ft.AlertDialog):
+        p = self._get_page()
+        if not p:
+            return
+        if hasattr(p, "show_dialog"):
+            try:
+                p.show_dialog(dialog)
+                return
+            except Exception:
+                pass
+        if hasattr(p, "open"):
+            try:
+                p.open(dialog)
+                return
+            except Exception:
+                pass
+        if hasattr(p, "overlay"):
+            p.overlay.append(dialog)
+            dialog.open = True
+            try:
+                p.update()
+            except Exception:
+                pass
+
+    def _close_dialog(self, dialog: Optional[ft.AlertDialog] = None):
+        p = self._get_page()
+        if not p:
+            if dialog:
+                dialog.open = False
+            return
+        if hasattr(p, "pop_dialog"):
+            try:
+                p.pop_dialog()
+                return
+            except Exception:
+                pass
+        if hasattr(p, "close") and dialog:
+            try:
+                p.close(dialog)
+                return
+            except Exception:
+                pass
+        if dialog:
+            dialog.open = False
+        try:
+            p.update()
+        except Exception:
+            pass
 
     def _handle_audio_loaded(self, name: str, data: bytes, waveform, spectrogram):
         if self.on_audio_loaded_cb:
@@ -118,7 +200,7 @@ class EditorView(ft.Container):
         """Load an ASS script into the editor."""
         try:
             self.document = AssDocument.from_text(ass_text)
-            self.selected_syllable_id = None
+            self.selected_syllable_ids = []
             self._undo_stack.clear()
             self._redo_stack.clear()
             self._refresh_ui()
@@ -129,9 +211,7 @@ class EditorView(ft.Container):
 
     def _show_snack(self, message: str, is_error: bool = False):
         try:
-            p = getattr(self, "_Control__page", None)
-            if p is None:
-                p = self.page
+            p = self._get_page()
             if p:
                 pal = get_current_palette()
                 p.snack_bar = ft.SnackBar(
@@ -142,15 +222,21 @@ class EditorView(ft.Container):
                 p.update()
         except Exception:
             pass
-
     def _build_controls(self):
         pal = get_current_palette()
-        self.stats_text = ft.Text("Слогов: 0 | Бёрст: 0", size=12, color=pal.muted)
+        ds = get_display_settings()
+        pad = ds.button_padding(4, 2)
+        f_title = ds.font_size(14)
+        f_stats = ds.font_size(11)
+        ic_size = ds.icon_size(18)
+
+        self.stats_text = ft.Text("Слогов: 0 | Бёрст: 0", size=f_stats, color=pal.muted)
 
         # Native FilePicker Action
         self.open_file_btn = ft.IconButton(
             icon=ft.Icons.FOLDER_OPEN,
             tooltip="Открыть файл субтитров (.ass)",
+            icon_size=ic_size,
             icon_color=pal.accent,
             action=ft.PickFiles(self.ass_picker, with_data=True),
         )
@@ -158,14 +244,14 @@ class EditorView(ft.Container):
         self.undo_btn = ft.IconButton(
             icon=ft.Icons.UNDO,
             tooltip="Отменить (Undo)",
-            icon_size=20,
+            icon_size=ic_size,
             icon_color=pal.fg,
             on_click=self.undo,
         )
         self.redo_btn = ft.IconButton(
             icon=ft.Icons.REDO,
             tooltip="Повторить (Redo)",
-            icon_size=20,
+            icon_size=ic_size,
             icon_color=pal.fg,
             on_click=self.redo,
         )
@@ -173,14 +259,22 @@ class EditorView(ft.Container):
         self.sps_jump_top_btn = ft.IconButton(
             icon=ft.Icons.SPEED,
             tooltip="Перейти в точный SPS",
-            icon_size=20,
+            icon_size=ic_size,
             icon_color=pal.accent,
             on_click=lambda e: self._transfer_to_sps(),
         )
 
         top_header_row = ft.Row(
             [
-                ft.Text("Караоке редактор", size=18, weight=ft.FontWeight.BOLD, color=pal.fg),
+                ft.Row(
+                    [
+                        ft.Text("Караоке редактор", size=f_title, weight=ft.FontWeight.BOLD, color=pal.fg),
+                        self.stats_text,
+                    ],
+                    spacing=6,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    wrap=True,
+                ),
                 ft.Row(
                     [
                         self.undo_btn,
@@ -188,7 +282,7 @@ class EditorView(ft.Container):
                         self.open_file_btn,
                         self.sps_jump_top_btn,
                     ],
-                    spacing=2,
+                    spacing=1,
                     tight=True,
                 ),
             ],
@@ -196,35 +290,22 @@ class EditorView(ft.Container):
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
-        top_stats_row = ft.Row(
-            [
-                self.stats_text,
-            ],
-            alignment=ft.MainAxisAlignment.START,
-        )
-
         top_bar = ft.Container(
-            content=ft.Column(
-                [
-                    top_header_row,
-                    top_stats_row,
-                ],
-                spacing=2,
-            ),
+            content=top_header_row,
             bgcolor=pal.panel,
-            padding=ft.Padding(12, 8, 12, 8),
-            border_radius=10,
+            padding=ft.Padding(10, 5, 10, 5),
+            border_radius=8,
             border=ft.Border.all(1, pal.border),
         )
 
-        self.syllables_list = ft.ListView(expand=True, spacing=8)
+        self.syllables_list = ft.ListView(expand=True, spacing=6)
 
         self.empty_placeholder = ft.Container(
             content=ft.Column(
                 [
-                    ft.Icon(ft.Icons.SUBTITLES_OFF, size=56, color=pal.muted),
-                    ft.Text("Субтитры не загружены", size=16, weight=ft.FontWeight.BOLD, color=pal.muted),
-                    ft.Text("Выровняйте аудио через Colab или откройте .ass файл", size=12, color=pal.muted),
+                    ft.Icon(ft.Icons.SUBTITLES_OFF, size=ds.icon_size(48), color=pal.muted),
+                    ft.Text("Субтитры не загружены", size=ds.font_size(15), weight=ft.FontWeight.BOLD, color=pal.muted),
+                    ft.Text("Выровняйте аудио через Colab или откройте .ass файл", size=ds.font_size(11.5), color=pal.muted),
                 ],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             ),
@@ -243,7 +324,7 @@ class EditorView(ft.Container):
                 self.docked_toolbar,
             ],
             expand=True,
-            spacing=6,
+            spacing=4,
         )
 
     def _transfer_to_sps(self):
@@ -255,8 +336,13 @@ class EditorView(ft.Container):
         if self.on_jump_to_sps:
             self.on_jump_to_sps(target_id or "")
 
+    def _toggle_multi_select(self):
+        self.multi_select_mode = not self.multi_select_mode
+        self._refresh_ui()
+
     def _refresh_ui(self):
         pal = get_current_palette()
+        ds = get_display_settings()
         if not self.document:
             self.syllables_list.controls.clear()
             self.syllables_list.controls.append(self.empty_placeholder)
@@ -270,7 +356,7 @@ class EditorView(ft.Container):
         all_syllables = list(self.document.karaoke_syllables())
         total_syls = len(all_syllables)
         burst_syls = sum(1 for s in all_syllables if s.burst_marked)
-        self.stats_text.value = f"Слогов: {total_syls} | В бёрсте: {burst_syls}"
+        self.stats_text.value = f"| {total_syls} сл (🔥 {burst_syls})"
         self.stats_text.color = pal.muted
 
         self.syllables_list.controls.clear()
@@ -290,31 +376,62 @@ class EditorView(ft.Container):
 
         # Sync all syllables to audio timeline for spectrogram & waveform visualization
         mt = MeasurementTimeline.from_karaoke(all_syllables)
-        self.audio_timeline.set_syllables(mt.syllables, self.selected_syllable_id)
+        first_sel_id = self.selected_syllable_ids[0] if self.selected_syllable_ids else None
+        self.audio_timeline.set_syllables(mt.syllables, first_sel_id)
 
-        # Update docked toolbar if a syllable is currently selected
-        selected_syl = next((s for s in all_syllables if s.id == self.selected_syllable_id), None)
-        if selected_syl:
-            self._update_docked_toolbar(selected_syl, all_syllables)
+        # Update docked toolbar if any syllable is currently selected
+        selected_syls = [s for s in all_syllables if s.id in self.selected_syllable_ids]
+        if selected_syls:
+            self._update_docked_toolbar(selected_syls, all_syllables)
             self.docked_toolbar.visible = True
-            self.audio_timeline.focus_syllable(selected_syl.start, selected_syl.end, syllable_id=selected_syl.id)
+            min_st = min(s.start for s in selected_syls)
+            max_en = max(s.end for s in selected_syls)
+            self.audio_timeline.focus_syllable(min_st, max_en, syllable_id=selected_syls[0].id)
         else:
-            self.selected_syllable_id = None
+            self._selected_syllable_ids = []
             self.docked_toolbar.visible = False
             self.audio_timeline.set_active_bounds(None, None)
 
         self._safe_update()
 
     def _on_timeline_syllable_clicked(self, sid: str):
-        self.selected_syllable_id = sid
+        if self.multi_select_mode:
+            if sid in self.selected_syllable_ids:
+                self.selected_syllable_ids.remove(sid)
+            else:
+                self.selected_syllable_ids.append(sid)
+        else:
+            self.selected_syllable_ids = [sid]
         self._refresh_ui()
 
     def _build_line_card(self, ev, syls: list[KaraokeSyllable]) -> ft.Container:
         pal = get_current_palette()
+        ds = get_display_settings()
         time_badge = ft.Text(
             f"Строка {ev.line_index} | {format_ass_time(ev.start)} ➔ {format_ass_time(ev.end)} ({int((ev.end - ev.start)*1000)}мс)",
-            size=11,
+            size=ds.font_size(10.5),
             color=pal.muted,
+        )
+
+        def _select_line(e):
+            self.selected_syllable_ids = [s.id for s in syls]
+            self._refresh_ui()
+
+        line_top = ft.Row(
+            [
+                time_badge,
+                ft.TextButton(
+                    "☑ Вся строка",
+                    style=ft.ButtonStyle(
+                        padding=ds.button_padding(4, 1),
+                        color=pal.accent,
+                    ),
+                    tooltip="Выбрать все слоги строки для слияния или бёрста",
+                    on_click=_select_line,
+                ),
+            ],
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
         chips = [self._build_syllable_chip(s) for s in syls]
@@ -322,20 +439,21 @@ class EditorView(ft.Container):
         return ft.Container(
             content=ft.Column(
                 [
-                    time_badge,
-                    ft.Row(chips, wrap=True, spacing=6, run_spacing=6),
+                    line_top,
+                    ft.Row(chips, wrap=True, spacing=ds.icon_size(5), run_spacing=ds.icon_size(5)),
                 ],
-                spacing=6,
+                spacing=3,
             ),
             bgcolor=pal.panel,
-            padding=10,
-            border_radius=10,
+            padding=ds.button_padding(8, 5),
+            border_radius=8,
             border=ft.Border.all(1, pal.border),
         )
 
     def _build_syllable_chip(self, s: KaraokeSyllable) -> ft.Container:
         pal = get_current_palette()
-        is_selected = s.id == self.selected_syllable_id
+        ds = get_display_settings()
+        is_selected = s.id in self.selected_syllable_ids
         is_burst = s.burst_marked
         text = s.visible_text.strip() or s.raw_text.strip() or "..."
         dur_ms = s.duration_cs * 10
@@ -355,82 +473,234 @@ class EditorView(ft.Container):
             chip_fg = pal.fg
 
         def _on_chip_tap(e):
-            if self.selected_syllable_id == s.id:
-                # If already selected, tap opens full text & tag editor
-                self._open_text_dialog(s)
-            else:
-                self.selected_syllable_id = s.id
+            if self.multi_select_mode:
+                if s.id in self.selected_syllable_ids:
+                    self.selected_syllable_ids.remove(s.id)
+                else:
+                    self.selected_syllable_ids.append(s.id)
                 self._refresh_ui()
+            else:
+                if self.selected_syllable_ids == [s.id]:
+                    self._open_text_dialog(s)
+                else:
+                    self.selected_syllable_ids = [s.id]
+                    self._refresh_ui()
 
         tag_badge = f"\\{tag_val}" if tag_val != "k" else ""
+        prefix = "✓ " if (is_selected and len(self.selected_syllable_ids) > 1) else ("🔥 " if is_burst else "")
         return ft.Container(
             content=ft.Row(
                 [
-                    ft.Text(f"{'🔥 ' if is_burst else ''}{text}", size=13, weight=ft.FontWeight.BOLD, color=chip_fg),
-                    ft.Text(f"{dur_ms}ms{(' ' + tag_badge) if tag_badge else ''}", size=10, color=chip_fg if (is_burst or is_selected) else pal.muted),
+                    ft.Text(f"{prefix}{text}", size=ds.font_size(12), weight=ft.FontWeight.BOLD, color=chip_fg),
+                    ft.Text(f"{dur_ms}ms{(' ' + tag_badge) if tag_badge else ''}", size=ds.font_size(9.5), color=chip_fg if (is_burst or is_selected) else pal.muted),
                 ],
-                spacing=3,
+                spacing=2,
                 tight=True,
             ),
             bgcolor=chip_bg,
             border=chip_border,
-            padding=ft.Padding(8, 6, 8, 6),
-            border_radius=8,
+            padding=ds.button_padding(6, 4),
+            border_radius=7,
             ink=True,
             on_click=_on_chip_tap,
         )
-
-    def _update_docked_toolbar(self, s: KaraokeSyllable, all_syllables: list[KaraokeSyllable]):
-        """Render touch controls for the active selected syllable matching PC functionality."""
+    def _update_docked_toolbar(self, selected_input, all_syllables: list[KaraokeSyllable]):
+        """Render touch controls for the selected syllable(s) matching PC functionality."""
         pal = get_current_palette()
+        ds = get_display_settings()
+        pad = ds.button_padding(5, 2)
+        fsize = ds.font_size(10.5)
+
+        if isinstance(selected_input, list):
+            selected_syls = selected_input
+        else:
+            selected_syls = [selected_input] if selected_input else []
+
+        if not selected_syls:
+            self.docked_toolbar.visible = False
+            return
+
+        # ----------------- CASE A: Multiple Syllables Selected -----------------
+        if len(selected_syls) > 1:
+            total_dur_ms = sum(item.duration_cs * 10 for item in selected_syls)
+            combined_text = "".join(item.visible_text.strip() or item.raw_text.strip() for item in selected_syls)
+            min_st = min(item.start for item in selected_syls)
+            max_en = max(item.end for item in selected_syls)
+
+            # Order selected syllables by sequence in same line
+            first_line = selected_syls[0].event_line_index
+            same_line = [item for item in all_syllables if item.event_line_index == first_line]
+            ordered_ids = [item.id for item in same_line if item.id in self.selected_syllable_ids]
+
+            def _merge_multi(e):
+                if not self.document:
+                    return
+                if len(ordered_ids) < 2:
+                    self._show_snack("Выберите минимум 2 слога для слияния", is_error=True)
+                    return
+                try:
+                    self._push_undo()
+                    res = merge_syllables(self.document, ordered_ids)
+                    if self.on_document_changed:
+                        self.on_document_changed(self.document)
+                    self.selected_syllable_ids = list(res.selected_ids)
+                    self._refresh_ui()
+                    self._show_snack(f"Объединено {len(ordered_ids)} слогов в один")
+                except Exception as ex:
+                    self._show_snack(f"Ошибка слияния: {ex}", is_error=True)
+
+            def _burst_multi(e):
+                if not self.document:
+                    return
+                self._push_undo()
+                all_burst = all(item.burst_marked for item in selected_syls)
+                if all_burst:
+                    uncolour_burst(self.document, ordered_ids)
+                else:
+                    colour_burst(self.document, ordered_ids)
+                if self.on_document_changed:
+                    self.on_document_changed(self.document)
+                self._refresh_ui()
+
+            def _delete_multi(e):
+                if not self.document:
+                    return
+                try:
+                    self._push_undo()
+                    for sid in reversed(ordered_ids):
+                        delete_syllable(self.document, sid)
+                    if self.on_document_changed:
+                        self.on_document_changed(self.document)
+                    self.selected_syllable_ids = []
+                    self._refresh_ui()
+                    self._show_snack(f"Удалено {len(ordered_ids)} слогов")
+                except Exception as ex:
+                    self._show_snack(f"Ошибка удаления: {ex}", is_error=True)
+
+            all_burst = all(item.burst_marked for item in selected_syls)
+
+            m_row1 = ft.Row(
+                [
+                    ft.Text(
+                        f"Выбрано: {len(selected_syls)} слогов ({total_dur_ms}мс) «{combined_text[:16]}»",
+                        size=ds.font_size(11.5),
+                        weight=ft.FontWeight.BOLD,
+                        color=pal.accent,
+                        overflow=ft.TextOverflow.ELLIPSIS,
+                        expand=True,
+                    ),
+                    ft.IconButton(
+                        icon=ft.Icons.PLAY_CIRCLE_FILL,
+                        tooltip="Воспроизвести диапазон выбранных слогов",
+                        icon_size=ds.icon_size(20),
+                        icon_color=pal.accent,
+                        on_click=lambda e: self.audio_timeline.play_range(min_st, max_en),
+                    ),
+                    ft.IconButton(
+                        icon=ft.Icons.CHECK_BOX if self.multi_select_mode else ft.Icons.CHECK_BOX_OUTLINE_BLANK,
+                        tooltip="Режим выбора нескольких слогов",
+                        icon_size=ds.icon_size(18),
+                        icon_color=pal.accent if self.multi_select_mode else pal.muted,
+                        on_click=lambda e: self._toggle_multi_select(),
+                    ),
+                    ft.IconButton(
+                        icon=ft.Icons.CLOSE,
+                        tooltip="Снять выделение",
+                        icon_size=ds.icon_size(18),
+                        icon_color=pal.muted,
+                        on_click=lambda e: self._deselect(),
+                    ),
+                ],
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+
+            m_row2 = ft.Row(
+                [
+                    ft.FilledButton(
+                        f"🔗 Слить {len(ordered_ids)} слогов",
+                        style=ft.ButtonStyle(bgcolor=pal.accent, color=pal.accent_fg, padding=ds.button_padding(6, 2)),
+                        on_click=_merge_multi,
+                    ),
+                    ft.FilledButton(
+                        "Снять 🔥" if all_burst else "🔥 Бёрст все",
+                        style=ft.ButtonStyle(bgcolor=pal.danger if not all_burst else pal.panel, color=pal.accent_fg if not all_burst else pal.fg, padding=ds.button_padding(5, 2)),
+                        on_click=_burst_multi,
+                    ),
+                    ft.FilledButton(
+                        f"🗑 Удалить ({len(ordered_ids)})",
+                        style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.danger, padding=ds.button_padding(5, 2)),
+                        on_click=_delete_multi,
+                    ),
+                    ft.FilledButton(
+                        "✕ Снять выбор",
+                        style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=ds.button_padding(5, 2)),
+                        on_click=lambda e: self._deselect(),
+                    ),
+                ],
+                spacing=3,
+                scroll=ft.ScrollMode.AUTO,
+            )
+
+            self.docked_toolbar.content = ft.Container(
+                content=ft.Column([m_row1, m_row2], spacing=2, tight=True),
+                bgcolor=pal.panel,
+                padding=ft.Padding(8, 4, 8, 4),
+                border_radius=8,
+                border=ft.Border.all(1.5, pal.accent),
+            )
+            return
+
+        # ----------------- CASE B: Single Syllable Selected -----------------
+        s = selected_syls[0]
         is_burst = s.burst_marked
         text = s.visible_text.strip() or s.raw_text.strip() or "..."
         dur_ms = s.duration_cs * 10
         idx = next((i for i, item in enumerate(all_syllables) if item.id == s.id), -1)
 
-        # Find adjacent syllables in same event line
+        # Adjacent syllables in same event line
         same_line = [item for item in all_syllables if item.event_line_index == s.event_line_index]
         ord_idx = next((i for i, item in enumerate(same_line) if item.id == s.id), -1)
         prev_s = same_line[ord_idx - 1] if ord_idx > 0 else None
         next_s = same_line[ord_idx + 1] if (ord_idx >= 0 and ord_idx + 1 < len(same_line)) else None
 
-        # Ensure toolbar_mode exists
         if not hasattr(self, "toolbar_mode"):
             self.toolbar_mode = "dur"
 
-        # 1. Header Row with quick navigation and close
         def _nav(step: int):
             new_idx = idx + step
             if 0 <= new_idx < len(all_syllables):
-                self.selected_syllable_id = all_syllables[new_idx].id
+                self.selected_syllable_ids = [all_syllables[new_idx].id]
                 self._refresh_ui()
 
         title_text = ft.Text(
-            f"«{text}»  ({dur_ms}мс, \\{s.tag_type.value})",
-            size=14,
+            f"«{text}» ({dur_ms}мс, \\{s.tag_type.value})",
+            size=ds.font_size(12),
             weight=ft.FontWeight.BOLD,
             color=pal.fg,
         )
-        time_text = ft.Text(f"{format_ass_time(s.start)} - {format_ass_time(s.end)} ({s.id})", size=11, color=pal.muted)
-
-        play_syl_btn = ft.IconButton(
-            icon=ft.Icons.PLAY_CIRCLE_FILL,
-            tooltip="Прослушать слог",
-            icon_size=22,
-            icon_color=pal.accent,
-            on_click=lambda e: self.audio_timeline.play_range(s.start, s.end),
+        time_text = ft.Text(
+            f"{format_ass_time(s.start)} - {format_ass_time(s.end)} ({s.id})",
+            size=ds.font_size(9.5),
+            color=pal.muted,
         )
 
         header_row = ft.Row(
             [
-                ft.Column([title_text, time_text], spacing=1, expand=True),
+                ft.Row([title_text, time_text], spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER, expand=True),
                 ft.Row(
                     [
-                        play_syl_btn,
+                        ft.IconButton(
+                            icon=ft.Icons.PLAY_CIRCLE_FILL,
+                            tooltip="Прослушать слог",
+                            icon_size=ds.icon_size(19),
+                            icon_color=pal.accent,
+                            on_click=lambda e: self.audio_timeline.play_range(s.start, s.end),
+                        ),
                         ft.IconButton(
                             icon=ft.Icons.ARROW_BACK,
                             tooltip="Предыдущий слог",
-                            icon_size=20,
+                            icon_size=ds.icon_size(17),
                             icon_color=pal.fg if idx > 0 else pal.muted,
                             disabled=idx <= 0,
                             on_click=lambda e: _nav(-1),
@@ -438,14 +708,21 @@ class EditorView(ft.Container):
                         ft.IconButton(
                             icon=ft.Icons.ARROW_FORWARD,
                             tooltip="Следующий слог",
-                            icon_size=20,
+                            icon_size=ds.icon_size(17),
                             icon_color=pal.fg if idx < len(all_syllables) - 1 else pal.muted,
                             disabled=idx >= len(all_syllables) - 1,
                             on_click=lambda e: _nav(1),
                         ),
                         ft.IconButton(
+                            icon=ft.Icons.CHECK_BOX if self.multi_select_mode else ft.Icons.CHECK_BOX_OUTLINE_BLANK,
+                            tooltip="Режим выбора нескольких слогов",
+                            icon_size=ds.icon_size(17),
+                            icon_color=pal.accent if self.multi_select_mode else pal.muted,
+                            on_click=lambda e: self._toggle_multi_select(),
+                        ),
+                        ft.IconButton(
                             icon=ft.Icons.CLOSE,
-                            icon_size=20,
+                            icon_size=ds.icon_size(17),
                             tooltip="Снять выделение",
                             icon_color=pal.muted,
                             on_click=lambda e: self._deselect(),
@@ -456,9 +733,10 @@ class EditorView(ft.Container):
                 ),
             ],
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
-        # 2. Timing Nudges: Duration (±10ms, ±50ms, ±100ms), Seam (±10ms, ±50ms), Shift (±10ms, ±50ms), and Cursor Snapping
+        # Timing nudges
         def _nudge_dur(delta_cs: int):
             if not self.document:
                 return
@@ -525,61 +803,6 @@ class EditorView(ft.Container):
             except Exception as ex:
                 self._show_snack(f"Ошибка привязки End: {ex}", is_error=True)
 
-        ds = get_display_settings()
-        pad = ds.button_padding(5, 3)
-        fsize = ds.font_size(11)
-
-        dur_steppers = ft.Row(
-            [
-                ft.Text("Длит:", size=fsize, weight=ft.FontWeight.BOLD, color=pal.muted),
-                ft.FilledButton("-100ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _nudge_dur(-10)),
-                ft.FilledButton("-50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _nudge_dur(-5)),
-                ft.FilledButton("-10ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _nudge_dur(-1)),
-                ft.FilledButton("+10ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _nudge_dur(1)),
-                ft.FilledButton("+50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _nudge_dur(5)),
-                ft.FilledButton("+100ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _nudge_dur(10)),
-            ],
-            spacing=3,
-            wrap=True,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        )
-
-        seam_steppers = ft.Row(
-            [
-                ft.Text("Шов: ", size=fsize, weight=ft.FontWeight.BOLD, color=pal.muted),
-                ft.FilledButton("⇥ -50ms", disabled=not next_s, style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _nudge_boundary(-5)),
-                ft.FilledButton("⇥ -10ms", disabled=not next_s, style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _nudge_boundary(-1)),
-                ft.FilledButton("+10ms ⇤", disabled=not next_s, style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _nudge_boundary(1)),
-                ft.FilledButton("+50ms ⇤", disabled=not next_s, style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _nudge_boundary(5)),
-            ],
-            spacing=3,
-            wrap=True,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        )
-
-        shift_steppers = ft.Row(
-            [
-                ft.Text("Сдвиг:", size=fsize, weight=ft.FontWeight.BOLD, color=pal.muted),
-                ft.FilledButton("-50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _shift(-5)),
-                ft.FilledButton("-10ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _shift(-1)),
-                ft.FilledButton("+10ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _shift(1)),
-                ft.FilledButton("+50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _shift(5)),
-            ],
-            spacing=3,
-            wrap=True,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        )
-
-        snap_steppers = ft.Row(
-            [
-                ft.FilledButton("🎯 Start = Курсор", tooltip="Сдвинуть начало слога к позиции курсора спектрограммы", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.accent, padding=pad), on_click=_snap_start_to_cursor),
-                ft.FilledButton("🎯 End = Курсор", tooltip="Сдвинуть конец слога к позиции курсора спектрограммы", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.accent, padding=pad), on_click=_snap_end_to_cursor),
-            ],
-            spacing=4,
-            wrap=True,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        )
-
         def _set_mode(m: str):
             self.toolbar_mode = m
             self._update_docked_toolbar(s, all_syllables)
@@ -590,36 +813,60 @@ class EditorView(ft.Container):
             return ft.Container(
                 content=ft.Text(
                     label,
-                    size=ds.font_size(10.5),
+                    size=ds.font_size(9.5),
                     weight=ft.FontWeight.BOLD if is_active else ft.FontWeight.NORMAL,
                     color=pal.accent_fg if is_active else pal.fg,
                 ),
                 bgcolor=pal.accent if is_active else pal.panel,
-                border_radius=5,
-                padding=ds.button_padding(6, 3),
+                border_radius=4,
+                padding=ds.button_padding(4, 2),
                 on_click=lambda e, mv=mode_val: _set_mode(mv),
             )
 
-        mode_tabs_row = ft.Row(
-            [
-                make_tab("⏱ Длит", "dur"),
-                make_tab("⇥ Шов", "seam"),
-                make_tab("⇄ Сдвиг", "shift"),
-                make_tab("🎯 Курсор", "snap"),
-            ],
-            spacing=4,
+        mode_tabs = [
+            make_tab("⏱ Длит", "dur"),
+            make_tab("⇥ Шов", "seam"),
+            make_tab("⇄ Сдвиг", "shift"),
+            make_tab("🎯 Курсор", "snap"),
+        ]
+
+        if self.toolbar_mode == "seam":
+            stepper_btns = [
+                ft.FilledButton("⇥ -50ms", disabled=not next_s, style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _nudge_boundary(-5)),
+                ft.FilledButton("⇥ -10ms", disabled=not next_s, style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _nudge_boundary(-1)),
+                ft.FilledButton("+10ms ⇤", disabled=not next_s, style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _nudge_boundary(1)),
+                ft.FilledButton("+50ms ⇤", disabled=not next_s, style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _nudge_boundary(5)),
+            ]
+        elif self.toolbar_mode == "shift":
+            stepper_btns = [
+                ft.FilledButton("-50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _shift(-5)),
+                ft.FilledButton("-10ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _shift(-1)),
+                ft.FilledButton("+10ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _shift(1)),
+                ft.FilledButton("+50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _shift(5)),
+            ]
+        elif self.toolbar_mode == "snap":
+            stepper_btns = [
+                ft.FilledButton("🎯 Start = Курсор", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.accent, padding=pad), on_click=_snap_start_to_cursor),
+                ft.FilledButton("🎯 End = Курсор", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.accent, padding=pad), on_click=_snap_end_to_cursor),
+            ]
+        else:
+            stepper_btns = [
+                ft.FilledButton("-100ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _nudge_dur(-10)),
+                ft.FilledButton("-50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _nudge_dur(-5)),
+                ft.FilledButton("-10ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _nudge_dur(-1)),
+                ft.FilledButton("+10ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _nudge_dur(1)),
+                ft.FilledButton("+50ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _nudge_dur(5)),
+                ft.FilledButton("+100ms", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.fg, padding=pad), on_click=lambda e: _nudge_dur(10)),
+            ]
+
+        timing_row = ft.Row(
+            mode_tabs + [ft.Container(width=4)] + stepper_btns,
+            spacing=3,
+            scroll=ft.ScrollMode.AUTO,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
-        active_timing_row = dur_steppers
-        if self.toolbar_mode == "seam":
-            active_timing_row = seam_steppers
-        elif self.toolbar_mode == "shift":
-            active_timing_row = shift_steppers
-        elif self.toolbar_mode == "snap":
-            active_timing_row = snap_steppers
-
-        # 3. Actions Row: Text, Timing dialog, Burst, Split, Merge, Insert, Delete, and Jump to SPS
+        # Action handlers
         def _toggle_burst(e):
             self._push_undo()
             if is_burst:
@@ -637,7 +884,7 @@ class EditorView(ft.Container):
                 if self.on_document_changed:
                     self.on_document_changed(self.document)
                 if res.selected_ids:
-                    self.selected_syllable_id = res.selected_ids[0]
+                    self.selected_syllable_ids = list(res.selected_ids)
                 self._refresh_ui()
                 self._show_snack("Слог разделён пополам")
             except Exception as ex:
@@ -651,7 +898,7 @@ class EditorView(ft.Container):
                     if self.on_document_changed:
                         self.on_document_changed(self.document)
                     if res.selected_ids:
-                        self.selected_syllable_id = res.selected_ids[0]
+                        self.selected_syllable_ids = list(res.selected_ids)
                     self._refresh_ui()
                     self._show_snack("Слоги объединены")
                 except Exception as ex:
@@ -666,7 +913,7 @@ class EditorView(ft.Container):
                 if self.on_document_changed:
                     self.on_document_changed(self.document)
                 if res.selected_ids:
-                    self.selected_syllable_id = res.selected_ids[0]
+                    self.selected_syllable_ids = list(res.selected_ids)
                 self._refresh_ui()
                 self._show_snack("Вставлен новый слог")
             except Exception as ex:
@@ -678,7 +925,7 @@ class EditorView(ft.Container):
                 res = delete_syllable(self.document, s.id)
                 if self.on_document_changed:
                     self.on_document_changed(self.document)
-                self.selected_syllable_id = res.selected_ids[0] if res.selected_ids else None
+                self.selected_syllable_ids = list(res.selected_ids) if res.selected_ids else []
                 self._refresh_ui()
                 self._show_snack("Слог удалён")
             except Exception as ex:
@@ -703,7 +950,7 @@ class EditorView(ft.Container):
                 ft.FilledButton("🗑", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.danger, padding=pad), on_click=_delete),
                 ft.FilledButton("🎯 В SPS", style=ft.ButtonStyle(bgcolor=pal.accent, color=pal.accent_fg, padding=pad), on_click=lambda e: self._transfer_to_sps()),
             ],
-            wrap=True,
+            scroll=ft.ScrollMode.AUTO,
             spacing=3,
         )
 
@@ -711,32 +958,35 @@ class EditorView(ft.Container):
             content=ft.Column(
                 [
                     header_row,
-                    mode_tabs_row,
-                    active_timing_row,
                     actions_row,
+                    timing_row,
                 ],
-                spacing=3,
+                spacing=2,
+                tight=True,
             ),
-            bgcolor=pal.raised,
-            padding=6,
+            bgcolor=pal.panel,
+            padding=ft.Padding(8, 4, 8, 4),
             border_radius=8,
             border=ft.Border.all(1.5, pal.accent),
         )
 
     def _deselect(self):
-        self.selected_syllable_id = None
+        self.selected_syllable_ids = []
         self._refresh_ui()
 
     def _open_text_dialog(self, s: KaraokeSyllable):
         pal = get_current_palette()
+        ds = get_display_settings()
         text_input = ft.TextField(
             label="Текст слога",
             value=s.visible_text.strip() or s.raw_text.strip(),
             autofocus=True,
+            text_size=ds.font_size(13),
         )
         rom_input = ft.TextField(
             label="Ромадзи (чтение)",
             value=s.romanization or "",
+            text_size=ds.font_size(13),
         )
         tag_dropdown = ft.Dropdown(
             label="Тип тега караоке",
@@ -747,6 +997,7 @@ class EditorView(ft.Container):
                 ft.dropdown.Option("K", "\\K (плавный alias)"),
             ],
             value=s.tag_type.value,
+            text_size=ds.font_size(13),
         )
 
         def _toggle_unspoken(e):
@@ -755,7 +1006,12 @@ class EditorView(ft.Container):
                 text_input.value = val[1:-1].strip()
             else:
                 text_input.value = f"[{val}]"
-            self.page.update()
+            try:
+                text_input.update()
+            except Exception:
+                p = self._get_page()
+                if p:
+                    p.update()
 
         unspoken_btn = ft.OutlinedButton(
             "[...] Непроизнесённое",
@@ -775,34 +1031,33 @@ class EditorView(ft.Container):
 
                 if self.on_document_changed:
                     self.on_document_changed(self.document)
-                dialog.open = False
+                self._close_dialog(dialog)
                 self._refresh_ui()
                 self._show_snack("Слог успешно обновлён")
             except Exception as ex:
                 self._show_snack(f"Ошибка сохранения: {ex}", is_error=True)
 
         dialog = ft.AlertDialog(
-            title=ft.Text(f"Редактирование {s.id}", color=pal.fg),
-            content=ft.Column([text_input, unspoken_btn, rom_input, tag_dropdown], tight=True, spacing=10),
+            title=ft.Text(f"Редактирование {s.id}", color=pal.fg, size=ds.font_size(15), weight=ft.FontWeight.BOLD),
+            content=ft.Column([text_input, unspoken_btn, rom_input, tag_dropdown], tight=True, spacing=8),
             actions=[
-                ft.TextButton("Отмена", on_click=lambda e: setattr(dialog, "open", False) or self.page.update()),
+                ft.TextButton("Отмена", on_click=lambda e: self._close_dialog(dialog)),
                 ft.FilledButton("Сохранить", on_click=_save),
             ],
         )
-        self.page.dialog = dialog
-        dialog.open = True
-        self.page.update()
+        self._open_dialog(dialog)
 
     def _open_timing_dialog(self, s: KaraokeSyllable):
         pal = get_current_palette()
         ds = get_display_settings()
-        pad = ds.button_padding(5, 3)
+        pad = ds.button_padding(5, 2)
 
         dur_ms = s.duration_cs * 10
         dur_input = ft.TextField(
             label="Длительность (мс)",
             value=str(dur_ms),
             keyboard_type=ft.KeyboardType.NUMBER,
+            text_size=ds.font_size(13),
         )
 
         cur_t = round(self.audio_timeline.center_time, 3)
@@ -811,7 +1066,12 @@ class EditorView(ft.Container):
             try:
                 val = int(dur_input.value or "0") + delta_ms
                 dur_input.value = str(max(10, val))
-                self.page.update()
+                try:
+                    dur_input.update()
+                except Exception:
+                    p = self._get_page()
+                    if p:
+                        p.update()
             except Exception:
                 pass
 
@@ -834,7 +1094,7 @@ class EditorView(ft.Container):
                 set_syllable_start_at_time(self.document, s.id, self.audio_timeline.center_time)
                 if self.on_document_changed:
                     self.on_document_changed(self.document)
-                dialog.open = False
+                self._close_dialog(dialog)
                 self._refresh_ui()
                 self._show_snack(f"Start слога привязан к курсору ({self.audio_timeline.center_time:.3f}с)")
             except Exception as ex:
@@ -846,7 +1106,7 @@ class EditorView(ft.Container):
                 set_syllable_end_at_time(self.document, s.id, self.audio_timeline.center_time)
                 if self.on_document_changed:
                     self.on_document_changed(self.document)
-                dialog.open = False
+                self._close_dialog(dialog)
                 self._refresh_ui()
                 self._show_snack(f"End слога привязан к курсору ({self.audio_timeline.center_time:.3f}с)")
             except Exception as ex:
@@ -870,9 +1130,8 @@ class EditorView(ft.Container):
         )
 
         info_text = ft.Text(
-            f"Текущий тайминг: {format_ass_time(s.start)} - {format_ass_time(s.end)}\n"
-            f"Старт: {s.start:.3f}с, Конец: {s.end:.3f}с, Длительность: {dur_ms}мс ({s.duration_cs} cs)",
-            size=11,
+            f"Старт: {s.start:.3f}с | Конец: {s.end:.3f}с | Длит: {dur_ms}мс",
+            size=ds.font_size(11),
             color=pal.muted,
         )
 
@@ -884,14 +1143,14 @@ class EditorView(ft.Container):
                 set_syllable_duration(self.document, s.id, new_cs)
                 if self.on_document_changed:
                     self.on_document_changed(self.document)
-                dialog.open = False
+                self._close_dialog(dialog)
                 self._refresh_ui()
                 self._show_snack(f"Длительность обновлена: {new_cs * 10}мс")
             except Exception as ex:
                 self._show_snack(f"Ошибка сохранения тайминга: {ex}", is_error=True)
 
         dialog = ft.AlertDialog(
-            title=ft.Text(f"Тайминг: «{s.visible_text or s.raw_text}» ({s.id})", color=pal.fg),
+            title=ft.Text(f"Тайминг «{s.visible_text or s.raw_text}»", color=pal.fg, size=ds.font_size(15), weight=ft.FontWeight.BOLD),
             content=ft.Column(
                 [
                     info_text,
@@ -900,16 +1159,14 @@ class EditorView(ft.Container):
                     snap_row,
                 ],
                 tight=True,
-                spacing=8,
+                spacing=6,
             ),
             actions=[
-                ft.TextButton("Отмена", on_click=lambda e: setattr(dialog, "open", False) or self.page.update()),
+                ft.TextButton("Отмена", on_click=lambda e: self._close_dialog(dialog)),
                 ft.FilledButton("Применить", on_click=_save),
             ],
         )
-        self.page.dialog = dialog
-        dialog.open = True
-        self.page.update()
+        self._open_dialog(dialog)
 
     def _on_ass_picked(self, result: ft.FilePickerResultEvent):
         if result.files:

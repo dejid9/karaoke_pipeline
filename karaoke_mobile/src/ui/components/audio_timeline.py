@@ -117,6 +117,19 @@ def hex_to_rgb(hex_str: str, default: tuple[int, int, int] = (255, 255, 255)) ->
     return default
 
 
+def _get_dummy_silent_wav_path() -> str:
+    """Provide a valid 44-byte silent WAV file so flet_audio.Audio initializes without error in Flutter."""
+    tmp_path = os.path.join(tempfile.gettempdir(), "karaoke_silence_init.wav")
+    if not os.path.exists(tmp_path):
+        wav_hdr = b'RIFF$\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00D\xac\x00\x00\x88X\x01\x00\x02\x00\x10\x00data\x00\x00\x00\x00'
+        try:
+            with open(tmp_path, "wb") as f:
+                f.write(wav_hdr)
+        except Exception:
+            pass
+    return tmp_path
+
+
 class AudioTimelineWidget(ft.Container):
     """Mobile Audio Timeline with Waveform, Spectrogram, and Perceptual Boundaries."""
 
@@ -134,6 +147,7 @@ class AudioTimelineWidget(ft.Container):
 
         self.syllables: list[TimelineSyllable] = []
         self.active_syllable_id: Optional[str] = None
+        self._page: Optional[ft.Page] = None
 
         self.waveform: Optional[WaveformData] = None
         self.spectrogram: Optional[SpectrogramData] = None
@@ -157,14 +171,16 @@ class AudioTimelineWidget(ft.Container):
         self.audio_picker = ft.FilePicker()
         self.audio_picker.on_result = self._on_audio_picked
 
-        # Native Audio Player
+        # Native Audio Player initialized with dummy silent wav
         self.temp_audio_path: Optional[str] = None
         self.is_playing: bool = False
         self._playback_token: int = 0
         self.audio_player: Optional[ft.Service] = None
         if fta is not None:
             try:
+                init_src = _get_dummy_silent_wav_path()
                 self.audio_player = fta.Audio(
+                    src=init_src,
                     autoplay=False,
                     volume=1.0,
                     on_position_change=self._on_player_position_change,
@@ -189,13 +205,35 @@ class AudioTimelineWidget(ft.Container):
             pass
 
     def _get_page(self) -> Optional[ft.Page]:
-        p = getattr(self, "_Control__page", None)
-        if p is not None:
-            return p
+        if getattr(self, "_page", None):
+            return self._page
         try:
-            return self.page
+            if self.page:
+                return self.page
         except Exception:
-            return None
+            pass
+        return getattr(self, "_Control__page", None)
+
+    def _ensure_audio_service(self):
+        """Ensure audio_player service is properly attached to the page."""
+        p = self._get_page()
+        if p and self.audio_player is not None:
+            if hasattr(p, "services") and self.audio_player not in p.services:
+                p.services.append(self.audio_player)
+                try:
+                    p.update()
+                except Exception:
+                    pass
+
+    def _update_player_src(self, path: str):
+        """Update audio source on audio_player and push update to client."""
+        self.temp_audio_path = path
+        if self.audio_player is not None:
+            self.audio_player.src = path
+            try:
+                self.audio_player.update()
+            except Exception:
+                pass
 
     def apply_theme(self, pal: ThemePalette):
         self._build_ui()
@@ -230,7 +268,7 @@ class AudioTimelineWidget(ft.Container):
             self._safe_update()
 
     def toggle_play(self, e=None):
-        """Play/pause continuous playback from center_time playhead."""
+        """Play/pause continuous playback from center_time playhead with smooth tracking."""
         if not self.audio_player or not self.temp_audio_path:
             return
         p = self._get_page()
@@ -249,14 +287,45 @@ class AudioTimelineWidget(ft.Container):
             else:
                 self.is_playing = True
                 self._update_play_icon()
+                self._ensure_audio_service()
+                token = self._playback_token
                 try:
                     pos_ms = max(0, int(self.center_time * 1000))
-                    await self.audio_player.seek(pos_ms)
-                    await self.audio_player.resume()
+                    if hasattr(self.audio_player, "play"):
+                        await self.audio_player.play(pos_ms)
+                    else:
+                        await self.audio_player.seek(pos_ms)
+                        await self.audio_player.resume()
                 except Exception as ex:
-                    print(f"Resume error: {ex}")
+                    print(f"Play error: {ex}")
                     self.is_playing = False
                     self._update_play_icon()
+                    return
+
+                # Smooth tracking loop
+                start_time = self.center_time
+                loop = asyncio.get_event_loop()
+                t0 = loop.time()
+                while self.is_playing and self._playback_token == token:
+                    await asyncio.sleep(0.05)
+                    elapsed = loop.time() - t0
+                    cur = start_time + elapsed
+                    if self.audio_duration and cur >= self.audio_duration:
+                        self.center_time = self.audio_duration
+                        self.is_playing = False
+                        self._update_play_icon()
+                        try:
+                            await self.audio_player.pause()
+                        except Exception:
+                            pass
+                        self._refresh_timeline()
+                        self._safe_update()
+                        break
+                    self.center_time = round(cur, 3)
+                    self._refresh_timeline()
+                    self._safe_update()
+                    if self.on_time_changed:
+                        self.on_time_changed(self.center_time)
 
         p.run_task(_run)
 
@@ -277,11 +346,16 @@ class AudioTimelineWidget(ft.Container):
                 await self.audio_player.seek(0)
             except Exception:
                 pass
+            self.center_time = 0.0
+            self._refresh_timeline()
+            self._safe_update()
+            if self.on_time_changed:
+                self.on_time_changed(self.center_time)
 
         p.run_task(_run)
 
     def play_range(self, start_sec: float, end_sec: float):
-        """Play a specific slice of audio (e.g. syllable or measurement) and auto-pause."""
+        """Play a specific slice of audio (e.g. syllable or measurement) and auto-pause with visual cursor."""
         if not self.audio_player or not self.temp_audio_path:
             return
         p = self._get_page()
@@ -293,20 +367,43 @@ class AudioTimelineWidget(ft.Container):
             token = self._playback_token
             self.is_playing = True
             self._update_play_icon()
+            self._ensure_audio_service()
             try:
                 pos_ms = max(0, int(start_sec * 1000))
-                await self.audio_player.seek(pos_ms)
-                await self.audio_player.resume()
+                if hasattr(self.audio_player, "play"):
+                    await self.audio_player.play(pos_ms)
+                else:
+                    await self.audio_player.seek(pos_ms)
+                    await self.audio_player.resume()
+
                 dur = max(0.05, end_sec - start_sec)
-                await asyncio.sleep(dur)
+                loop = asyncio.get_event_loop()
+                t0 = loop.time()
+                while loop.time() - t0 < dur and self.is_playing and self._playback_token == token:
+                    elapsed = loop.time() - t0
+                    self.center_time = round(start_sec + elapsed, 3)
+                    self._refresh_timeline()
+                    self._safe_update()
+                    if self.on_time_changed:
+                        self.on_time_changed(self.center_time)
+                    await asyncio.sleep(0.04)
+
                 if self._playback_token == token:
-                    await self.audio_player.pause()
+                    try:
+                        await self.audio_player.pause()
+                    except Exception:
+                        pass
             except Exception as ex:
                 print(f"Play range error: {ex}")
             finally:
                 if self._playback_token == token:
                     self.is_playing = False
                     self._update_play_icon()
+                    self.center_time = round(end_sec, 3)
+                    self._refresh_timeline()
+                    self._safe_update()
+                    if self.on_time_changed:
+                        self.on_time_changed(self.center_time)
 
         p.run_task(_run)
 
@@ -323,6 +420,8 @@ class AudioTimelineWidget(ft.Container):
         if not self.is_playing:
             return
         pos_val = getattr(e, "position", None)
+        if pos_val is None and isinstance(getattr(e, "data", None), dict):
+            pos_val = e.data.get("position")
         if pos_val is not None:
             if hasattr(pos_val, "total_seconds"):
                 sec = pos_val.total_seconds()
@@ -627,8 +726,8 @@ class AudioTimelineWidget(ft.Container):
             self.temp_audio_path = os.path.join(tmp_dir, f"karaoke_audio_{clean}")
             with open(self.temp_audio_path, "wb") as fp:
                 fp.write(data)
-            if self.audio_player is not None:
-                self.audio_player.src = self.temp_audio_path
+            self._update_player_src(self.temp_audio_path)
+            self._ensure_audio_service()
         except Exception as ex:
             print(f"Error caching audio for player: {ex}")
 
@@ -833,9 +932,8 @@ class AudioTimelineWidget(ft.Container):
                 data = f.read()
 
         if path and os.path.exists(path):
-            self.temp_audio_path = path
-            if self.audio_player is not None:
-                self.audio_player.src = path
+            self._update_player_src(path)
+            self._ensure_audio_service()
         elif data:
             self._cache_audio_file(name, data)
 

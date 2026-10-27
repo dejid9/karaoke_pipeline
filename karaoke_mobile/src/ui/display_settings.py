@@ -106,17 +106,23 @@ def open_display_settings_dialog(page: ft.Page, on_changed: Callable[[], None]):
     ds = get_display_settings()
     pal = get_current_palette()
 
+    scale_str = f"{ds.ui_scale:.2f}"
+    known_scales = ["0.65", "0.75", "0.80", "0.90", "1.00", "1.15", "1.25"]
+    if scale_str not in known_scales:
+        scale_str = "0.80"
+
     scale_dropdown = ft.Dropdown(
         label="Масштаб интерфейса (DPI)",
         options=[
-            ft.dropdown.Option("0.70", "0.70x (Ультра-компактный — максимум элементов)"),
-            ft.dropdown.Option("0.80", "0.80x (Компактный — рекомендуемый для 20:9)"),
+            ft.dropdown.Option("0.65", "0.65x (Ультра-компактный — помещается максимум)"),
+            ft.dropdown.Option("0.75", "0.75x (Компактный для экранов 20:9)"),
+            ft.dropdown.Option("0.80", "0.80x (Компактный 80%)"),
             ft.dropdown.Option("0.90", "0.90x (Уменьшенный)"),
             ft.dropdown.Option("1.00", "1.00x (Стандартный 100%)"),
             ft.dropdown.Option("1.15", "1.15x (Крупный 115%)"),
             ft.dropdown.Option("1.25", "1.25x (Очень крупный 125%)"),
         ],
-        value=f"{ds.ui_scale:.2f}",
+        value=scale_str,
         text_size=13,
         border_radius=8,
     )

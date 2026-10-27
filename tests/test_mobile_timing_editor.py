@@ -12,6 +12,9 @@ from core.editor import (
     set_syllable_end_at_time,
     nudge_syllable_duration,
     redistribute_boundary,
+    merge_syllables,
+    colour_burst,
+    uncolour_burst,
     KaraokeEditError,
 )
 from core.sps import MeasurementTimeline
@@ -178,6 +181,88 @@ class TestMobileTimingEditor(unittest.TestCase):
         tl._toggle_collapse()
         self.assertFalse(tl.collapsed)
         self.assertTrue(tl.top_controls_row2.visible)
+
+    def test_editor_multi_select_and_merge(self):
+        doc = AssDocument.from_text(self.ass_text)
+        editor = EditorView()
+        editor.document = doc
+        editor._refresh_ui()
+
+        # Multi-select first two syllables: "L2:S0", "L2:S1"
+        editor.selected_syllable_ids = ["L2:S0", "L2:S1"]
+        editor._refresh_ui()
+        self.assertEqual(len(editor.selected_syllable_ids), 2)
+        self.assertTrue(editor.docked_toolbar.visible)
+
+        # Merge selected syllables
+        res = merge_syllables(editor.document, editor.selected_syllable_ids)
+        self.assertTrue(res.selected_ids)
+        new_syls = list(editor.document.karaoke_syllables())
+        # Was 3, now 2 syllables
+        self.assertEqual(len(new_syls), 2)
+        # Combined duration: 50cs + 50cs = 100cs
+        self.assertEqual(new_syls[0].duration_cs, 100)
+        self.assertEqual(new_syls[0].visible_text, "Hello")
+
+    def test_editor_multi_select_burst(self):
+        doc = AssDocument.from_text(self.ass_text)
+        editor = EditorView()
+        editor.document = doc
+        editor._refresh_ui()
+
+        # Multi-select all 3 syllables
+        all_ids = [s.id for s in doc.karaoke_syllables()]
+        colour_burst(editor.document, all_ids)
+        for s in editor.document.karaoke_syllables():
+            self.assertTrue(s.burst_marked)
+
+        uncolour_burst(editor.document, all_ids)
+        for s in editor.document.karaoke_syllables():
+            self.assertFalse(s.burst_marked)
+
+    def test_editor_dialogs_open_and_close(self):
+        import flet as ft
+
+        class MockPage:
+            def __init__(self):
+                self.opened_dialogs = []
+                self.closed_dialogs = []
+                self.services = []
+                self.overlay = []
+
+            def show_dialog(self, dlg):
+                self.opened_dialogs.append(dlg)
+
+            def pop_dialog(self):
+                if self.opened_dialogs:
+                    dlg = self.opened_dialogs.pop()
+                    self.closed_dialogs.append(dlg)
+                    return dlg
+                return None
+
+            def update(self):
+                pass
+
+        doc = AssDocument.from_text(self.ass_text)
+        editor = EditorView()
+        editor.document = doc
+        mock_p = MockPage()
+        editor.set_page(mock_p)
+        editor._refresh_ui()
+
+        s0 = list(doc.karaoke_syllables())[0]
+
+        # Test Text Dialog
+        editor._open_text_dialog(s0)
+        self.assertEqual(len(mock_p.opened_dialogs), 1)
+        editor._close_dialog()
+        self.assertEqual(len(mock_p.closed_dialogs), 1)
+
+        # Test Timing Dialog
+        editor._open_timing_dialog(s0)
+        self.assertEqual(len(mock_p.opened_dialogs), 1)
+        editor._close_dialog()
+        self.assertEqual(len(mock_p.closed_dialogs), 2)
 
 
 if __name__ == "__main__":

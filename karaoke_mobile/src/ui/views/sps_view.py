@@ -44,6 +44,7 @@ class SPSView(ft.Container):
         self.selected_burst: Optional[BurstCandidate] = None
         self.selected_syllable_id: Optional[str] = None
         self.min_peak_sps: float = 6.0
+        self._page: Optional[ft.Page] = None
 
         # Audio Timeline (Waveform & Spectrogram) with Syllable Selection
         self.audio_timeline = AudioTimelineWidget(
@@ -60,6 +61,21 @@ class SPSView(ft.Container):
         self.meas_open_picker = ft.FilePicker(on_result=self._on_meas_open_result)
 
         self._build_controls()
+
+    def set_page(self, page: ft.Page):
+        self._page = page
+        if hasattr(self, "audio_timeline"):
+            self.audio_timeline._page = page
+
+    def _get_page(self) -> Optional[ft.Page]:
+        if getattr(self, "_page", None):
+            return self._page
+        try:
+            if self.page:
+                return self.page
+        except Exception:
+            pass
+        return getattr(self, "_Control__page", None)
 
     def _handle_audio_loaded(self, name: str, data: bytes, waveform, spectrogram):
         if self.on_audio_loaded_cb:
@@ -148,9 +164,7 @@ class SPSView(ft.Container):
 
     def _show_snack(self, message: str, is_error: bool = False):
         try:
-            p = getattr(self, "_Control__page", None)
-            if p is None:
-                p = self.page
+            p = self._get_page()
             if p:
                 pal = get_current_palette()
                 p.snack_bar = ft.SnackBar(
@@ -418,34 +432,45 @@ class SPSView(ft.Container):
             spacing=3,
         )
 
+        meas_header = ft.Row(
+            [
+                self.meas_syllable_label,
+                step_selector_row,
+            ],
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            scroll=ft.ScrollMode.AUTO,
+        )
+
+        meas_actions_row = ft.Row(
+            [
+                self.prev_syl_btn,
+                self.next_syl_btn,
+                self.play_sps_btn,
+                self.meas_apply_btn,
+                self.meas_reset_btn,
+                self.meas_undo_btn,
+                self.meas_redo_btn,
+            ],
+            scroll=ft.ScrollMode.AUTO,
+            spacing=3,
+        )
+
         meas_editor_card = ft.Container(
             content=ft.Column(
                 [
-                    self.meas_syllable_label,
+                    meas_header,
                     self.meas_info_label,
-                    step_selector_row,
                     start_row,
                     end_row,
-                    ft.Row(
-                        [
-                            self.prev_syl_btn,
-                            self.next_syl_btn,
-                            self.play_sps_btn,
-                            self.meas_apply_btn,
-                            self.meas_reset_btn,
-                            self.meas_undo_btn,
-                            self.meas_redo_btn,
-                        ],
-                        wrap=True,
-                        spacing=5,
-                    ),
-                    sps_hint,
+                    meas_actions_row,
                 ],
-                spacing=5,
+                spacing=3,
+                tight=True,
             ),
             bgcolor=pal.panel,
-            padding=8,
-            border_radius=10,
+            padding=ft.Padding(8, 4, 8, 4),
+            border_radius=8,
             border=ft.Border.all(1, pal.border),
         )
 

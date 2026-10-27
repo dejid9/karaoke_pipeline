@@ -228,6 +228,13 @@ def main(page: ft.Page):
 
     views = [mfa_view, editor_view, sps_view, burst_view, export_view]
 
+    # Provide direct page reference to all views
+    for v in views:
+        if hasattr(v, "set_page"):
+            v.set_page(page)
+        elif hasattr(v, "_page"):
+            v._page = page
+
     # Register all view services (FilePickers) in page.services (NEVER in page.overlay, as Services are not visual controls)
     for v in views:
         if hasattr(v, "get_services"):
@@ -433,11 +440,20 @@ def main(page: ft.Page):
         max_w, max_h = ds.compute_bounds(page.width, page.height)
         page_container.width = max_w
         page_container.height = max_h
+        page_container.expand = (max_w is None and max_h is None)
 
-        # 4. Propagate theme and scale to active view
-        idx = nav_bar.selected_index
-        if hasattr(views[idx], "apply_theme"):
-            views[idx].apply_theme(cur_pal)
+        # 4. Propagate theme and scale across all views
+        for v in views:
+            if hasattr(v, "apply_theme"):
+                try:
+                    v.apply_theme(cur_pal)
+                except Exception:
+                    pass
+            elif hasattr(v, "_refresh_ui"):
+                try:
+                    v._refresh_ui()
+                except Exception:
+                    pass
 
         page.update()
 

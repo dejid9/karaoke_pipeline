@@ -46,15 +46,26 @@ class MFAView(ft.Container):
         self._build_controls()
         self._safe_update()
 
+    def _get_page(self) -> Optional[ft.Page]:
+        if getattr(self, "_page", None):
+            return self._page
+        try:
+            if self.page:
+                return self.page
+        except Exception:
+            pass
+        return getattr(self, "_Control__page", None)
+
     def _show_snack(self, message: str, is_error: bool = False):
-        if self.page:
+        p = self._get_page()
+        if p:
             pal = get_current_palette()
-            self.page.snack_bar = ft.SnackBar(
+            p.snack_bar = ft.SnackBar(
                 ft.Text(message, color=pal.accent_fg if not is_error else "#ffffff"),
                 bgcolor=pal.danger if is_error else pal.panel,
             )
-            self.page.snack_bar.open = True
-            self.page.update()
+            p.snack_bar.open = True
+            p.update()
 
     def _build_controls(self):
         pal = get_current_palette()
