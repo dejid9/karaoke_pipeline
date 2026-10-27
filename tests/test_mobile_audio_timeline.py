@@ -178,6 +178,25 @@ class TestMobileAudioTimeline(unittest.TestCase):
         widget._on_timeline_pan(MockPan())
         self.assertGreater(widget.center_time, t_before)
 
+    def test_playback_speed_and_range_markers(self):
+        widget = AudioTimelineWidget()
+        self.assertEqual(widget.playback_speed, 1.0)
+        widget.set_playback_speed(1.25)
+        self.assertEqual(widget.playback_speed, 1.25)
+
+        widget.center_time = 1.5
+        widget.set_range_in()
+        self.assertEqual(widget.range_start, 1.5)
+
+        widget.center_time = 3.2
+        widget.set_range_out()
+        self.assertEqual(widget.range_end, 3.2)
+
+        widget.clear_range()
+        self.assertIsNone(widget.range_start)
+        self.assertIsNone(widget.range_end)
+
+
 
 if __name__ == "__main__":
     unittest.main()

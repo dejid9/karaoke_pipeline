@@ -63,8 +63,8 @@ def main(page: ft.Page):
         if spectrogram is not None:
             current_spectrogram = spectrogram
 
-        editor_view.audio_timeline.set_audio(name, data, current_waveform, current_spectrogram)
-        sps_view.audio_timeline.set_audio(name, data, current_waveform, current_spectrogram)
+        editor_view.audio_timeline.set_audio(name, data or current_audio_bytes, current_waveform, current_spectrogram)
+        sps_view.audio_timeline.set_audio(name, data or current_audio_bytes, current_waveform, current_spectrogram)
 
     def sync_document(doc: AssDocument, timeline: Optional[MeasurementTimeline] = None):
         nonlocal current_document, current_timeline
@@ -258,10 +258,18 @@ def main(page: ft.Page):
     def on_nav_change(e):
         idx = nav_bar.selected_index
         cur_pal = get_current_palette()
-        # If switching to SPS or Editor view, ensure state is synced
+        # Pause playing audio when switching views and sync cursor
+        if editor_view.audio_timeline.is_playing:
+            editor_view.audio_timeline.stop_audio()
+        if sps_view.audio_timeline.is_playing:
+            sps_view.audio_timeline.stop_audio()
+
+        # If switching to SPS or Editor view, ensure state and cursor are synced
         if idx == 2 and current_document:
+            sps_view.audio_timeline.center_time = editor_view.audio_timeline.center_time
             sps_view.set_document(current_document, current_timeline)
         elif idx == 1 and current_document:
+            editor_view.audio_timeline.center_time = sps_view.audio_timeline.center_time
             editor_view._refresh_ui()
 
         if hasattr(views[idx], "apply_theme"):

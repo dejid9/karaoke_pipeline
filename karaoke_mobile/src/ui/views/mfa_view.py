@@ -69,6 +69,8 @@ class MFAView(ft.Container):
 
     def _build_controls(self):
         pal = get_current_palette()
+        prev_url = getattr(self.url_input, "value", "") if hasattr(self, "url_input") else ""
+        prev_transcript = getattr(self.transcript_input, "value", "") if hasattr(self, "transcript_input") else ""
 
         # 1. Colab Server Connection Section
         self.status_icon = ft.Icon(ft.Icons.CLOUD_OFF, color=pal.warning, size=24)
@@ -77,6 +79,7 @@ class MFAView(ft.Container):
         self.url_input = ft.TextField(
             label="URL сервера Google Colab (Cloudflare tunnel)",
             hint_text="https://xxxx.trycloudflare.com",
+            value=prev_url,
             prefix_icon=ft.Icons.LINK,
             border_radius=8,
             text_size=13,
@@ -131,6 +134,7 @@ class MFAView(ft.Container):
         self.transcript_input = ft.TextField(
             label="Текст песни / реплик (построчно)",
             hint_text="Вставьте текст песни здесь...",
+            value=prev_transcript,
             multiline=True,
             min_lines=4,
             max_lines=8,

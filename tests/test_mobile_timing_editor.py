@@ -15,6 +15,7 @@ from core.editor import (
     merge_syllables,
     colour_burst,
     uncolour_burst,
+    split_syllable_at_time,
     KaraokeEditError,
 )
 from core.sps import MeasurementTimeline
@@ -162,6 +163,15 @@ class TestMobileTimingEditor(unittest.TestCase):
         editor._refresh_ui()
         self.assertEqual(editor.toolbar_mode, "shift")
 
+    def test_sps_view_graph_rendering(self):
+        doc = AssDocument.from_text(self.ass_text)
+        sps_view = SPSView()
+        sps_view.set_document(doc)
+
+        self.assertIsNotNone(sps_view.timeline)
+        self.assertTrue(sps_view.sps_graph_img.src.startswith("data:image/bmp;base64,"))
+        self.assertGreater(len(sps_view.sps_graph_img.src), 100)
+
     def test_audio_timeline_collapse_expand_cycle(self):
         from ui.components.audio_timeline import AudioTimelineWidget
         tl = AudioTimelineWidget()
@@ -263,6 +273,28 @@ class TestMobileTimingEditor(unittest.TestCase):
         self.assertEqual(len(mock_p.opened_dialogs), 1)
         editor._close_dialog()
         self.assertEqual(len(mock_p.closed_dialogs), 2)
+
+        # Test Full Text Dialog
+        editor._open_full_text_dialog()
+        self.assertEqual(len(mock_p.opened_dialogs), 1)
+        editor._close_dialog()
+        self.assertEqual(len(mock_p.closed_dialogs), 3)
+
+    def test_editor_split_at_cursor(self):
+        doc = AssDocument.from_text(self.ass_text)
+        editor = EditorView()
+        editor.document = doc
+        editor.selected_syllable_ids = ["L2:S0"]
+        editor._refresh_ui()
+
+        # s0 is 1.00..1.50s (Hel)
+        editor.audio_timeline.center_time = 1.25
+        # Trigger split at cursor (via action handler logic or split_syllable_at_time)
+        res = split_syllable_at_time(editor.document, "L2:S0", 1.25)
+        self.assertEqual(res.action, "split-time")
+        syls = list(editor.document.karaoke_syllables())
+        self.assertEqual(len(syls), 4)
+
 
 
 if __name__ == "__main__":

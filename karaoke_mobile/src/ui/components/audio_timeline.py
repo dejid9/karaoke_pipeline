@@ -1,4 +1,4 @@
-"""Audio Timeline Component with Waveform, Spectrogram, and Syllable Boundaries."""
+"""Audio Timeline Component with Waveform, Spectrogram, Syllable Boundaries, and PC-parity Transport."""
 
 from __future__ import annotations
 
@@ -98,7 +98,6 @@ def load_waveform_from_wav_bytes(data: bytes, bins_per_second: int = 100) -> Wav
                 peaks.append((min(chunk), max(chunk)))
         total_samples = len(samples_list)
     else:
-        # Fallback to standard python peak reader
         stream = io.BytesIO(raw)
         peaks, total_samples = _read_pcm_peaks_python(stream, samples_per_bin)
 
@@ -131,7 +130,7 @@ def _get_dummy_silent_wav_path() -> str:
 
 
 class AudioTimelineWidget(ft.Container):
-    """Mobile Audio Timeline with Waveform, Spectrogram, and Perceptual Boundaries."""
+    """Mobile Audio Timeline with Waveform, Spectrogram, Range Markers, and Full Transport."""
 
     def __init__(
         self,
@@ -155,6 +154,7 @@ class AudioTimelineWidget(ft.Container):
         self.audio_mode: str = "waveform"  # "waveform", "spectrogram", "both"
         self.audio_name: str = ""
         self.audio_duration: float = 0.0
+        self.current_audio_bytes: Optional[bytes] = None
 
         self.center_time: float = 0.0
         self.zoom_span: float = 6.0  # seconds visible
@@ -162,6 +162,11 @@ class AudioTimelineWidget(ft.Container):
         self.active_end: Optional[float] = None
         self.measured_start: Optional[float] = None
         self.measured_end: Optional[float] = None
+
+        # Playback speed and range markers (In/Out markers from PC)
+        self.playback_speed: float = 1.0
+        self.range_start: Optional[float] = None
+        self.range_end: Optional[float] = None
 
         self.collapsed: bool = get_display_settings().timeline_collapsed
         self.render_width: int = 320
@@ -179,10 +184,12 @@ class AudioTimelineWidget(ft.Container):
         if fta is not None:
             try:
                 init_src = _get_dummy_silent_wav_path()
+                rel_mode = getattr(fta, "ReleaseMode", None)
                 self.audio_player = fta.Audio(
                     src=init_src,
                     autoplay=False,
                     volume=1.0,
+                    release_mode=rel_mode.STOP if rel_mode and hasattr(rel_mode, "STOP") else None,
                     on_position_change=self._on_player_position_change,
                     on_state_change=self._on_player_state_change,
                 )
@@ -213,6 +220,20 @@ class AudioTimelineWidget(ft.Container):
         except Exception:
             pass
         return getattr(self, "_Control__page", None)
+
+    def _show_notice(self, message: str, is_error: bool = False):
+        p = self._get_page()
+        if p:
+            pal = get_current_palette()
+            try:
+                p.snack_bar = ft.SnackBar(
+                    ft.Text(message, color=pal.accent_fg if not is_error else "#ffffff"),
+                    bgcolor=pal.danger if is_error else pal.panel,
+                )
+                p.snack_bar.open = True
+                p.update()
+            except Exception:
+                pass
 
     def _ensure_audio_service(self):
         """Ensure audio_player service is properly attached to the page."""
@@ -254,9 +275,15 @@ class AudioTimelineWidget(ft.Container):
         ds.save()
         if hasattr(self, "toggle_collapse_btn"):
             self.toggle_collapse_btn.icon = ft.Icons.KEYBOARD_ARROW_DOWN if self.collapsed else ft.Icons.KEYBOARD_ARROW_UP
-            self.toggle_collapse_btn.tooltip = "Развернуть" if self.collapsed else "Свернуть"
+            self.toggle_collapse_btn.tooltip = "Развернуть таймлайн" if self.collapsed else "Свернуть таймлайн"
         if hasattr(self, "top_controls_row2"):
             self.top_controls_row2.visible = not self.collapsed
+        if hasattr(self, "timeline_gesture"):
+            self.timeline_gesture.visible = not self.collapsed and (self.waveform is not None or self.spectrogram is not None)
+        if hasattr(self, "time_labels_row"):
+            self.time_labels_row.visible = not self.collapsed and (self.waveform is not None or self.spectrogram is not None)
+        if hasattr(self, "empty_banner"):
+            self.empty_banner.visible = not self.collapsed and (self.waveform is None and self.spectrogram is None)
         self._refresh_timeline()
         p = self._get_page()
         if p:
@@ -267,9 +294,59 @@ class AudioTimelineWidget(ft.Container):
         else:
             self._safe_update()
 
+    def set_playback_speed(self, speed: float):
+        self.playback_speed = speed
+        if self.audio_player is not None:
+            try:
+                self.audio_player.playback_rate = speed
+                self.audio_player.update()
+            except Exception:
+                pass
+        if hasattr(self, "speed_text"):
+            self.speed_text.value = f"{speed:g}x"
+            self._safe_update()
+        self._show_notice(f"Скорость воспроизведения: {speed:g}x")
+
+    def set_range_in(self, e=None):
+        self.range_start = round(self.center_time, 3)
+        if self.range_end is not None and self.range_end <= self.range_start:
+            self.range_end = round(self.range_start + 1.0, 3)
+        self._refresh_timeline()
+        self._safe_update()
+        self._show_notice(f"Маркер [I] установлен: {self.range_start:.3f}с")
+
+    def set_range_out(self, e=None):
+        self.range_end = round(self.center_time, 3)
+        if self.range_start is not None and self.range_start >= self.range_end:
+            self.range_start = max(0.0, round(self.range_end - 1.0, 3))
+        self._refresh_timeline()
+        self._safe_update()
+        self._show_notice(f"Маркер [O] установлен: {self.range_end:.3f}с")
+
+    def clear_range(self, e=None):
+        self.range_start = None
+        self.range_end = None
+        self._refresh_timeline()
+        self._safe_update()
+        self._show_notice("Маркеры диапазона [I]/[O] очищены")
+
+    def play_marked_range(self, e=None):
+        if self.range_start is not None and self.range_end is not None:
+            st = min(self.range_start, self.range_end)
+            en = max(self.range_start, self.range_end)
+            self.play_range(st, en)
+        elif self.active_start is not None and self.active_end is not None:
+            self.play_range(self.active_start, self.active_end)
+        else:
+            self._show_notice("Установите маркеры [I] и [O] или выберите слог")
+
     def toggle_play(self, e=None):
         """Play/pause continuous playback from center_time playhead with smooth tracking."""
-        if not self.audio_player or not self.temp_audio_path:
+        if not self.audio_player:
+            self._show_notice("Аудиоплеер недоступен", is_error=True)
+            return
+        if not self.temp_audio_path and not self.current_audio_bytes:
+            self._show_notice("Сначала загрузите аудиофайл (.wav / .mp3)")
             return
         p = self._get_page()
         if not p:
@@ -289,26 +366,29 @@ class AudioTimelineWidget(ft.Container):
                 self._update_play_icon()
                 self._ensure_audio_service()
                 token = self._playback_token
+                pos_ms = max(0, int(self.center_time * 1000))
                 try:
-                    pos_ms = max(0, int(self.center_time * 1000))
-                    if hasattr(self.audio_player, "play"):
-                        await self.audio_player.play(pos_ms)
-                    else:
+                    if hasattr(self.audio_player, "seek"):
                         await self.audio_player.seek(pos_ms)
+                    if hasattr(self.audio_player, "resume"):
                         await self.audio_player.resume()
+                    elif hasattr(self.audio_player, "play"):
+                        await self.audio_player.play(pos_ms)
                 except Exception as ex:
                     print(f"Play error: {ex}")
-                    self.is_playing = False
-                    self._update_play_icon()
-                    return
+                    try:
+                        if hasattr(self.audio_player, "play"):
+                            await self.audio_player.play(pos_ms)
+                    except Exception:
+                        pass
 
                 # Smooth tracking loop
                 start_time = self.center_time
                 loop = asyncio.get_event_loop()
                 t0 = loop.time()
                 while self.is_playing and self._playback_token == token:
-                    await asyncio.sleep(0.05)
-                    elapsed = loop.time() - t0
+                    await asyncio.sleep(0.04)
+                    elapsed = (loop.time() - t0) * self.playback_speed
                     cur = start_time + elapsed
                     if self.audio_duration and cur >= self.audio_duration:
                         self.center_time = self.audio_duration
@@ -356,7 +436,10 @@ class AudioTimelineWidget(ft.Container):
 
     def play_range(self, start_sec: float, end_sec: float):
         """Play a specific slice of audio (e.g. syllable or measurement) and auto-pause with visual cursor."""
-        if not self.audio_player or not self.temp_audio_path:
+        if not self.audio_player:
+            return
+        if not self.temp_audio_path and not self.current_audio_bytes:
+            self._show_notice("Загрузите аудио для воспроизведения")
             return
         p = self._get_page()
         if not p:
@@ -370,17 +453,22 @@ class AudioTimelineWidget(ft.Container):
             self._ensure_audio_service()
             try:
                 pos_ms = max(0, int(start_sec * 1000))
-                if hasattr(self.audio_player, "play"):
-                    await self.audio_player.play(pos_ms)
-                else:
-                    await self.audio_player.seek(pos_ms)
-                    await self.audio_player.resume()
+                try:
+                    if hasattr(self.audio_player, "seek"):
+                        await self.audio_player.seek(pos_ms)
+                    if hasattr(self.audio_player, "resume"):
+                        await self.audio_player.resume()
+                    elif hasattr(self.audio_player, "play"):
+                        await self.audio_player.play(pos_ms)
+                except Exception:
+                    if hasattr(self.audio_player, "play"):
+                        await self.audio_player.play(pos_ms)
 
-                dur = max(0.05, end_sec - start_sec)
+                dur = max(0.05, (end_sec - start_sec) / max(0.2, self.playback_speed))
                 loop = asyncio.get_event_loop()
                 t0 = loop.time()
                 while loop.time() - t0 < dur and self.is_playing and self._playback_token == token:
-                    elapsed = loop.time() - t0
+                    elapsed = (loop.time() - t0) * self.playback_speed
                     self.center_time = round(start_sec + elapsed, 3)
                     self._refresh_timeline()
                     self._safe_update()
@@ -399,11 +487,7 @@ class AudioTimelineWidget(ft.Container):
                 if self._playback_token == token:
                     self.is_playing = False
                     self._update_play_icon()
-                    self.center_time = round(end_sec, 3)
-                    self._refresh_timeline()
                     self._safe_update()
-                    if self.on_time_changed:
-                        self.on_time_changed(self.center_time)
 
         p.run_task(_run)
 
@@ -456,12 +540,19 @@ class AudioTimelineWidget(ft.Container):
             self.audio_name if self.audio_name else "Аудио не загружено",
             size=ds.font_size(11),
             weight=ft.FontWeight.BOLD,
-            color=pal.fg if self.waveform or self.spectrogram else pal.muted,
+            color=pal.fg if (self.waveform or self.spectrogram or self.current_audio_bytes) else pal.muted,
             max_lines=1,
             overflow=ft.TextOverflow.ELLIPSIS,
         )
 
-        self.time_span_text = ft.Text("00:00.0 - 00:06.0", size=ds.font_size(9.5), color=pal.muted)
+        def fmt_clock(sec: float) -> str:
+            m = int(sec // 60)
+            s = sec % 60
+            return f"{m:02d}:{s:04.1f}"
+
+        cur_str = fmt_clock(self.center_time)
+        tot_str = fmt_clock(self.audio_duration) if self.audio_duration else "--:--"
+        self.time_span_text = ft.Text(f"{cur_str} / {tot_str}", size=ds.font_size(10), color=pal.accent, weight=ft.FontWeight.BOLD)
 
         # Mode Buttons
         def make_mode_btn(label: str, mode_val: str):
@@ -469,10 +560,10 @@ class AudioTimelineWidget(ft.Container):
             return ft.FilledButton(
                 label,
                 style=ft.ButtonStyle(
-                    bgcolor=pal.accent if is_active else pal.raised,
-                    color=pal.accent_fg if is_active else pal.muted,
-                    padding=ds.button_padding(5, 2),
-                    shape=ft.RoundedRectangleBorder(radius=6),
+                    bgcolor=pal.accent if is_active else pal.panel,
+                    color=pal.accent_fg if is_active else pal.fg,
+                    padding=ds.button_padding(4, 2),
+                    shape=ft.RoundedRectangleBorder(radius=5),
                 ),
                 on_click=lambda e: self.set_audio_mode(mode_val),
             )
@@ -538,7 +629,7 @@ class AudioTimelineWidget(ft.Container):
         # Play / Pause & Stop Buttons
         self.play_pause_btn = ft.IconButton(
             icon=ft.Icons.PAUSE if self.is_playing else ft.Icons.PLAY_ARROW,
-            icon_size=ds.icon_size(18),
+            icon_size=ds.icon_size(20),
             tooltip="Воспроизвести / пауза",
             icon_color=pal.accent,
             on_click=self.toggle_play,
@@ -551,6 +642,51 @@ class AudioTimelineWidget(ft.Container):
             on_click=self.stop_audio,
         )
 
+        # Speed selector
+        self.speed_text = ft.Text(f"{self.playback_speed:g}x", size=ds.font_size(10), weight=ft.FontWeight.BOLD, color=pal.fg)
+        speed_items = [
+            ft.PopupMenuItem(content=f"{sp:g}x", on_click=lambda e, s=sp: self.set_playback_speed(s))
+            for sp in (0.5, 0.75, 1.0, 1.25, 1.5)
+        ]
+        self.speed_btn = ft.PopupMenuButton(
+            content=ft.Container(
+                content=self.speed_text,
+                padding=ds.button_padding(4, 2),
+                bgcolor=pal.panel,
+                border_radius=4,
+                border=ft.Border.all(1, pal.border),
+            ),
+            tooltip="Скорость воспроизведения",
+            items=speed_items,
+        )
+
+        # Range Markers [I], [O], [▶ I-O], [✕]
+        self.range_in_btn = ft.FilledButton(
+            "[I]",
+            tooltip="Установить маркер начала диапазона (In)",
+            style=ft.ButtonStyle(padding=ds.button_padding(4, 1), bgcolor=pal.panel, color="#4CAF50"),
+            on_click=self.set_range_in,
+        )
+        self.range_out_btn = ft.FilledButton(
+            "[O]",
+            tooltip="Установить маркер конца диапазона (Out)",
+            style=ft.ButtonStyle(padding=ds.button_padding(4, 1), bgcolor=pal.panel, color="#FF9800"),
+            on_click=self.set_range_out,
+        )
+        self.play_range_btn = ft.FilledButton(
+            "▶ I-O",
+            tooltip="Воспроизвести диапазон [I]..[O]",
+            style=ft.ButtonStyle(padding=ds.button_padding(4, 1), bgcolor=pal.panel, color=pal.accent),
+            on_click=self.play_marked_range,
+        )
+        self.clear_range_btn = ft.IconButton(
+            icon=ft.Icons.CLOSE,
+            icon_size=ds.icon_size(14),
+            tooltip="Очистить маркеры диапазона",
+            icon_color=pal.muted,
+            on_click=self.clear_range,
+        )
+
         top_controls_row1 = ft.Row(
             [
                 ft.Row(
@@ -561,14 +697,16 @@ class AudioTimelineWidget(ft.Container):
                     spacing=3,
                     expand=True,
                 ),
+                self.time_span_text,
                 ft.Row(
                     [
                         self.play_pause_btn,
                         self.stop_btn,
+                        self.speed_btn,
                         self.toggle_collapse_btn,
                         self.open_audio_btn,
                     ],
-                    spacing=0,
+                    spacing=1,
                     tight=True,
                 ),
             ],
@@ -579,8 +717,8 @@ class AudioTimelineWidget(ft.Container):
 
         top_controls_row2 = ft.Row(
             [
-                ft.Row([self.mode_wave_btn, self.mode_spec_btn, self.mode_both_btn], spacing=3),
-                self.time_span_text,
+                ft.Row([self.mode_wave_btn, self.mode_spec_btn, self.mode_both_btn], spacing=2),
+                ft.Row([self.range_in_btn, self.range_out_btn, self.play_range_btn, self.clear_range_btn], spacing=2, tight=True),
                 ft.Row(
                     [
                         self.pan_left_btn,
@@ -594,7 +732,7 @@ class AudioTimelineWidget(ft.Container):
             ],
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            wrap=True,
+            scroll=ft.ScrollMode.AUTO,
             visible=not self.collapsed,
         )
         self.top_controls_row2 = top_controls_row2
@@ -636,13 +774,13 @@ class AudioTimelineWidget(ft.Container):
                 [
                     ft.Row(
                         [
-                            ft.Icon(ft.Icons.GRAPHIC_EQ, size=20, color=pal.muted),
+                            ft.Icon(ft.Icons.GRAPHIC_EQ, size=18, color=pal.muted),
                             ft.Text("Вейвформа / спектрограмма", size=ds.font_size(11), weight=ft.FontWeight.BOLD, color=pal.muted),
                         ],
                         spacing=4,
                     ),
                     ft.FilledButton(
-                        "🎵 Открыть",
+                        "🎵 Открыть аудио",
                         style=ft.ButtonStyle(
                             bgcolor=pal.raised,
                             color=pal.fg,
@@ -661,7 +799,7 @@ class AudioTimelineWidget(ft.Container):
                 wrap=True,
             ),
             bgcolor=pal.panel,
-            padding=ft.Padding(8, 6, 8, 6),
+            padding=ft.Padding(8, 5, 8, 5),
             border_radius=8,
             border=ft.Border.all(1, pal.border),
             visible=not self.collapsed,
@@ -680,7 +818,7 @@ class AudioTimelineWidget(ft.Container):
                 spacing=3,
             ),
             bgcolor=pal.raised,
-            padding=8,
+            padding=6,
             border_radius=10,
             border=ft.Border.all(1, pal.border),
         )
@@ -702,6 +840,8 @@ class AudioTimelineWidget(ft.Container):
         self.audio_name = name
         self.waveform = waveform
         self.spectrogram = spectrogram
+        if audio_bytes is not None:
+            self.current_audio_bytes = audio_bytes
 
         if waveform is not None:
             self.audio_duration = waveform.duration
@@ -736,7 +876,6 @@ class AudioTimelineWidget(ft.Container):
         ext = Path(name).suffix.lower()
         try:
             if ext == ".wfm" or data.startswith(b"WFM1"):
-                # Waveform cache format
                 tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wfm")
                 try:
                     tmp.write(data)
@@ -764,25 +903,23 @@ class AudioTimelineWidget(ft.Container):
                 self.waveform = load_waveform_from_wav_bytes(data)
                 self.audio_duration = self.waveform.duration
             else:
-                # Try generic WAV or if ffmpeg available
                 try:
                     self.waveform = load_waveform_from_wav_bytes(data)
                     self.audio_duration = self.waveform.duration
                 except Exception:
                     pass
         except Exception as ex:
-            print(f"Error decoding audio {name}: {ex}")
+            print(f"Error decoding audio: {ex}")
 
     def set_syllables(
         self,
         syllables: Sequence[TimelineSyllable],
         active_id: Optional[str] = None,
     ):
-        """Pass all syllables in document/timeline to display boundaries on spectrogram and waveform."""
         self.syllables = list(syllables)
         self.active_syllable_id = active_id
         if active_id:
-            syl = next((s for s in self.syllables if s.id == active_id), None)
+            syl = next((s for s in syllables if s.id == active_id), None)
             if syl:
                 self.active_start = syl.start
                 self.active_end = syl.end
@@ -879,32 +1016,31 @@ class AudioTimelineWidget(ft.Container):
             dx = e.local_delta.x
         elif dx is None and hasattr(e, "primary_delta") and e.primary_delta is not None:
             dx = e.primary_delta
-        if dx is None or dx == 0:
+        if dx is None:
             return
 
-        delta_sec = - (float(dx) / width) * self.zoom_span
+        time_delta = -float(dx) / width * self.zoom_span
         max_dur = max(self.audio_duration, (self.active_end or 0.0) + 10.0, 10.0)
-        self.center_time = max(0.0, min(max_dur, self.center_time + delta_sec))
+        self.center_time = max(0.0, min(max_dur, round(self.center_time + time_delta, 3)))
         self._refresh_timeline()
         self._safe_update()
         if self.on_time_changed:
             self.on_time_changed(self.center_time)
 
     def _handle_syllable_chip_click(self, sid: str):
-        self.active_syllable_id = sid
         syl = next((s for s in self.syllables if s.id == sid), None)
-        if syl:
-            self.active_start = syl.start
-            self.active_end = syl.end
-            self.measured_start = getattr(syl, "measured_start", None)
-            self.measured_end = getattr(syl, "measured_end", None)
-            self.center_time = (syl.start + syl.end) / 2.0
+        if not syl:
+            return
+        self.active_syllable_id = sid
+        self.active_start = syl.start
+        self.active_end = syl.end
+        self.measured_start = getattr(syl, "measured_start", None)
+        self.measured_end = getattr(syl, "measured_end", None)
+        self.center_time = (syl.start + syl.end) / 2.0
         self._refresh_timeline()
         self._safe_update()
         if self.on_syllable_clicked:
             self.on_syllable_clicked(sid)
-        if self.on_time_changed:
-            self.on_time_changed(self.center_time)
 
     def _change_zoom(self, factor: float):
         self.zoom_span = max(0.5, min(120.0, self.zoom_span * factor))
@@ -940,6 +1076,7 @@ class AudioTimelineWidget(ft.Container):
         if data:
             self._decode_and_set_audio(name, data)
             self.audio_name = name
+            self.current_audio_bytes = data
             self._build_ui()
             self._refresh_timeline()
             self._safe_update()
@@ -949,7 +1086,17 @@ class AudioTimelineWidget(ft.Container):
     def _refresh_timeline(self):
         pal = get_current_palette()
         ds = get_display_settings()
-        has_media = self.waveform is not None or self.spectrogram is not None
+        has_media = self.waveform is not None or self.spectrogram is not None or self.current_audio_bytes is not None
+
+        def fmt_clock(sec: float) -> str:
+            m = int(sec // 60)
+            s = sec % 60
+            return f"{m:02d}:{s:04.1f}"
+
+        cur_str = fmt_clock(self.center_time)
+        tot_str = fmt_clock(self.audio_duration) if self.audio_duration else "--:--"
+        if hasattr(self, "time_span_text"):
+            self.time_span_text.value = f"{cur_str} / {tot_str}"
 
         if hasattr(self, "top_controls_row2"):
             self.top_controls_row2.visible = not self.collapsed
@@ -982,13 +1129,6 @@ class AudioTimelineWidget(ft.Container):
         v_start = max(0.0, self.center_time - half_span)
         v_end = v_start + self.zoom_span
 
-        def fmt_time(t: float) -> str:
-            m = int(t // 60)
-            s = t % 60
-            return f"{m:02d}:{s:04.1f}"
-
-        self.time_span_text.value = f"{fmt_time(v_start)} - {fmt_time(v_end)} (±{self.zoom_span:.1f}s)"
-
         # Generate Time Ticks
         self.time_labels_row.controls.clear()
         ticks = 5
@@ -996,48 +1136,37 @@ class AudioTimelineWidget(ft.Container):
         for i in range(ticks):
             t_val = v_start + i * step
             self.time_labels_row.controls.append(
-                ft.Text(fmt_time(t_val), size=9, color=pal.muted)
+                ft.Text(fmt_clock(t_val), size=9, color=pal.muted)
             )
 
-        # Populate Syllables Strip with visible syllables
+        # Generate Interactive Syllable Strip
         self.syllable_strip.controls.clear()
-        if self.syllables:
-            visible_syls = [s for s in self.syllables if s.end >= v_start and s.start <= v_end]
-            if visible_syls:
-                self.syllable_strip.visible = True
-                for s in visible_syls:
-                    is_active = (s.id == self.active_syllable_id)
-                    dur_ms = int(round(s.effective_duration * 1000)) if hasattr(s, "effective_duration") else int(round((s.end - s.start) * 1000))
-                    txt = s.text.strip().replace("\n", " ") if hasattr(s, "text") and s.text else "•"
-                    if len(txt) > 8:
-                        txt = txt[:7] + "…"
-
-                    label = f"{txt} ({dur_ms}ms)"
-                    if getattr(s, "burst_marked", False):
-                        label = f"🔥 {label}"
-
-                    chip_bg = pal.accent if is_active else (pal.raised if getattr(s, "measurement_changed", False) else pal.panel)
-                    chip_fg = pal.accent_fg if is_active else pal.fg
-                    chip_border = ft.Border.all(
-                        1.5 if is_active else 1,
-                        pal.accent if is_active else (pal.accent_alt if getattr(s, "measurement_changed", False) else pal.border)
-                    )
-
-                    btn = ft.Container(
-                        content=ft.Text(label, size=ds.font_size(9.5), weight=ft.FontWeight.BOLD if is_active else ft.FontWeight.NORMAL, color=chip_fg),
-                        bgcolor=chip_bg,
-                        border=chip_border,
-                        border_radius=5,
-                        padding=ds.button_padding(4, 2),
+        visible_syls = [s for s in self.syllables if not (s.end < v_start or s.start > v_end)]
+        if visible_syls:
+            self.syllable_strip.visible = True
+            for s in visible_syls[:12]:
+                is_act = (s.id == self.active_syllable_id)
+                dur_ms = int(round((s.end - s.start) * 1000))
+                self.syllable_strip.controls.append(
+                    ft.Container(
+                        content=ft.Row(
+                            [
+                                ft.Text(s.text.strip() or "...", size=9, weight=ft.FontWeight.BOLD, color=pal.accent_fg if is_act else pal.fg),
+                                ft.Text(f"{dur_ms}ms", size=8, color=pal.accent_fg if is_act else pal.muted),
+                            ],
+                            spacing=2,
+                            tight=True,
+                        ),
+                        bgcolor=pal.accent if is_act else pal.panel,
+                        border_radius=4,
+                        padding=ft.Padding(4, 2, 4, 2),
+                        border=ft.Border.all(1, pal.accent if is_act else pal.border),
                         on_click=lambda e, sid=s.id: self._handle_syllable_chip_click(sid),
                     )
-                    self.syllable_strip.controls.append(btn)
-            else:
-                self.syllable_strip.visible = False
+                )
         else:
             self.syllable_strip.visible = False
 
-        # Render BMP Viewport
         try:
             b64_bmp = self._render_viewport_bmp(v_start, v_end, pal)
             self.timeline_image.src = f"data:image/bmp;base64,{b64_bmp}"
@@ -1045,13 +1174,12 @@ class AudioTimelineWidget(ft.Container):
             print(f"Error rendering timeline BMP: {ex}")
 
     def _render_viewport_bmp(self, v_start: float, v_end: float, pal: ThemePalette) -> str:
+        """Render 24-bit BMP image for viewport with Waveform, Spectrogram, Range Markers, and Syllables."""
         width = self.render_width
         try:
-            p = getattr(self, "_Control__page", None)
-            if p is None:
-                p = self.page
+            p = self._get_page()
             if p and getattr(p, "width", None):
-                width = max(240, min(1200, int(p.width - 32)))
+                width = max(240, min(1400, int(p.width - 32)))
                 self.render_width = width
         except Exception:
             pass
@@ -1068,6 +1196,8 @@ class AudioTimelineWidget(ft.Container):
         ass_line_rgb = (0, 229, 255)  # Cyan
         meas_line_rgb = (255, 179, 0)  # Amber / Warning
         cursor_rgb = (255, 235, 59)    # Playhead cursor
+        range_in_rgb = (76, 175, 80)   # Green for In marker
+        range_out_rgb = (255, 152, 0)  # Orange for Out marker
         syl_line_rgb = (
             min(255, int(bg_rgb[0] * 0.4 + 90)),
             min(255, int(bg_rgb[1] * 0.4 + 100)),
@@ -1077,6 +1207,11 @@ class AudioTimelineWidget(ft.Container):
             min(255, int(bg_rgb[0] * 0.7 + wave_rgb[0] * 0.3)),
             min(255, int(bg_rgb[1] * 0.7 + wave_rgb[1] * 0.3)),
             min(255, int(bg_rgb[2] * 0.7 + wave_rgb[2] * 0.3)),
+        )
+        range_tint_rgb = (
+            min(255, int(bg_rgb[0] * 0.8 + 25)),
+            min(255, int(bg_rgb[1] * 0.8 + 55)),
+            min(255, int(bg_rgb[2] * 0.8 + 35)),
         )
 
         span = max(1e-9, v_end - v_start)
@@ -1092,6 +1227,36 @@ class AudioTimelineWidget(ft.Container):
         is_act_boundary = bytearray(width)
         is_meas_boundary = bytearray(width)
         is_active_body = bytearray(width)
+        is_range_body = bytearray(width)
+        is_in_boundary = bytearray(width)
+        is_out_boundary = bytearray(width)
+
+        # Mark In and Out markers if set
+        if self.range_start is not None:
+            xi = time_to_x(self.range_start)
+            if xi is not None and 0 <= xi < width:
+                is_in_boundary[xi] = 1
+                if xi + 1 < width:
+                    is_in_boundary[xi + 1] = 1
+
+        if self.range_end is not None:
+            xo = time_to_x(self.range_end)
+            if xo is not None and 0 <= xo < width:
+                is_out_boundary[xo] = 1
+                if xo + 1 < width:
+                    is_out_boundary[xo + 1] = 1
+
+        if self.range_start is not None and self.range_end is not None:
+            rst = min(self.range_start, self.range_end)
+            ren = max(self.range_start, self.range_end)
+            if not (ren < v_start or rst > v_end):
+                xr0 = time_to_x(rst)
+                xr1 = time_to_x(ren)
+                if xr0 is not None and xr1 is not None:
+                    xr_min = max(0, min(width - 1, min(xr0, xr1)))
+                    xr_max = max(0, min(width - 1, max(xr0, xr1)))
+                    for x in range(xr_min, xr_max + 1):
+                        is_range_body[x] = 1
 
         # Mark all visible syllables on the timeline
         for s in self.syllables:
@@ -1227,7 +1392,12 @@ class AudioTimelineWidget(ft.Container):
                         px_g = spec_rgb_bytes[idx + 1]
                         px_b = spec_rgb_bytes[idx + 2]
                     else:
-                        px_r, px_g, px_b = tint_rgb if is_active_body[x] else bg_rgb
+                        if is_active_body[x]:
+                            px_r, px_g, px_b = tint_rgb
+                        elif is_range_body[x]:
+                            px_r, px_g, px_b = range_tint_rgb
+                        else:
+                            px_r, px_g, px_b = bg_rgb
 
                     # Center baseline
                     if y == center_y:
@@ -1255,10 +1425,15 @@ class AudioTimelineWidget(ft.Container):
                     px_g = int(px_g * 0.35 + syl_line_rgb[1] * 0.65)
                     px_b = int(px_b * 0.35 + syl_line_rgb[2] * 0.65)
 
-                # Center cursor playhead (dashed line)
+                # In / Out Range markers
+                if is_in_boundary[x] and y >= top_lane_h:
+                    px_r, px_g, px_b = range_in_rgb
+                elif is_out_boundary[x] and y >= top_lane_h:
+                    px_r, px_g, px_b = range_out_rgb
+
+                # Center cursor playhead (solid bright yellow line)
                 if center_x is not None and x == center_x and y >= top_lane_h:
-                    if (y // 3) % 2 == 0:
-                        px_r, px_g, px_b = cursor_rgb
+                    px_r, px_g, px_b = cursor_rgb
 
                 out_rgb[idx] = px_r
                 out_rgb[idx + 1] = px_g

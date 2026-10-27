@@ -265,6 +265,14 @@ def open_display_settings_dialog(page: ft.Page, on_changed: Callable[[], None]):
         scrollable=True,
     )
 
+    if hasattr(page, "overlay"):
+        for item in list(page.overlay):
+            if getattr(item, "_is_display_settings", False):
+                try:
+                    page.overlay.remove(item)
+                except Exception:
+                    pass
+    bs._is_display_settings = True
     page.overlay.append(bs)
     bs.open = True
     page.update()
