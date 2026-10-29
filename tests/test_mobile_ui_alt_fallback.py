@@ -40,11 +40,17 @@ class TestUIAltFallback(unittest.TestCase):
         os.environ["KARAOKE_UI_ALT"] = "1"
         self.assertTrue(is_alt_ui_enabled())
 
-        # If ui_alt doesn't have an editor_view yet, it gracefully falls back to default
+        from ui_alt.views.editor_view import EditorView as AltEditorView
+        from ui_alt.views.sps_view import SPSView as AltSPSView
+
+        # ui_alt provides EditorView and SPSView, while others fall back to standard
         mfa, editor, sps, burst, export, is_alt = get_active_views()
         self.assertTrue(is_alt)
-        # Fallback to DefaultEditorView because ui_alt/views/editor_view is not yet created
-        self.assertIs(editor, DefaultEditorView)
+        self.assertIs(editor, AltEditorView)
+        self.assertIs(sps, AltSPSView)
+        # Verify fallback for un-implemented views
+        from ui.views.burst_view import BurstView as DefaultBurstView
+        self.assertIs(burst, DefaultBurstView)
 
     def test_env_disabled_overrides_settings(self):
         os.environ["KARAOKE_UI_ALT"] = "0"
