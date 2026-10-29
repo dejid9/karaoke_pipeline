@@ -1,17 +1,25 @@
-"""Modern Touch-First Karaoke Syllable & Timing Editor for Mobile (ui_alt).
+"""Karaoke Mobile (ui_alt) — Authentic PC-Workbench Redesign for Mobile.
 
-Features:
-- Snap to Playhead ('|← Сюда', '→| Сюда', '✂ По курсору')
-- Touch Jog Wheel Controller for millisecond precision
-- Full 20:9 screen adaptation (No vertical text stretching, adaptive landscape 2-column split)
-- Floating multi-selection action bar
-- Full lyrics / song text overview dialog
+Faithfully recreates the layout, workflow, and visual language of the desktop
+Karaoke PC version (karaoke_gui) adapted for touchscreen mobile devices (especially 20:9):
+- Subheader: KARAOKE // SPS, ASS status, Syllable count badge, Transfer to SPS
+- Transport Bar: [▶/■], [■], Метки: [|←], [|▶], [→|], [▶|], [|▶|], [↔], [×], Speed pills [0.5×]..[1.5×]
+- Audio Layer: [Waveform/Spectrogram/Both], Zoom controls
+- Center Timeline: Waveform/Spectrogram with karaoke text slices, playhead, and range limits
+- Bottom Dock:
+    * Left Card (PC Card 1): Слог, [▶ Слог], [←], [→], Текст слога, Романизация, [✂ По курсору], [[Непроизнесённое]]
+    * Right Card (PC Card 2): Тайминг ([Вставить], [Разделить 50/50], [Совместить], [Удалить]),
+                              Тип тега (\\k, \\kf, \\ko), Undo/Redo, [💾 Сохранить ASS], [📄 Весь текст…],
+                              Burst-окраска ([🔥 Окрасить в Burst], [Снять Burst])
 """
 
 from __future__ import annotations
 
+import io
 import re
+import tempfile
 from typing import Callable, Optional
+import wave
 
 import flet as ft
 
@@ -38,11 +46,10 @@ from core.sps import MeasurementTimeline
 from ui.display_settings import get_display_settings
 from ui.theme import ThemePalette, get_current_palette
 from ui_alt.components.audio_timeline import AudioTimelineWidget
-from ui_alt.components.jog_wheel import JogWheelWidget
 
 
 class EditorView(ft.Container):
-    """Flagship touch-first mobile karaoke editor."""
+    """Authentic PC-workbench karaoke editor for mobile."""
 
     def __init__(
         self,
@@ -64,6 +71,7 @@ class EditorView(ft.Container):
         self._undo_stack: list[str] = []
         self._redo_stack: list[str] = []
         self.toolbar_mode: str = "dur"
+        self._active_mobile_card: str = "text"  # "text", "actions", "all"
 
         # File Pickers
         self.ass_picker = ft.FilePicker(on_result=self._on_ass_picked)
@@ -72,147 +80,327 @@ class EditorView(ft.Container):
         self.audio_timeline = AudioTimelineWidget(
             on_audio_loaded=self._handle_audio_loaded,
             on_syllable_clicked=self._on_timeline_syllable_clicked,
-            on_cursor_moved=self._on_cursor_moved,
-        )
-
-        # Touch Jog Wheel Controller
-        self.jog_wheel = JogWheelWidget(
-            on_nudge=self._on_jog_nudge,
-            on_snap_to_cursor=self._on_jog_snap,
-            on_split_at_cursor=self._on_jog_split,
+            on_time_changed=self._on_timeline_time_changed,
         )
 
         pal = get_current_palette()
         ds = get_display_settings()
 
-        # Top Bar: Single line (prevents 20:9 vertical wrapping bug!)
-        self.app_title_text = ft.Text(
-            "Караоке",
-            size=ds.font_size(14),
+        # ==================== 1. PC SUBHEADER ====================
+        self.lbl_logo = ft.Text(
+            "KARAOKE // SPS",
+            size=ds.font_size(13),
             weight=ft.FontWeight.BOLD,
-            color=pal.fg,
+            color=pal.accent,
         )
-        self.stats_text = ft.Text("0 сл", size=ds.font_size(11), color=pal.muted)
-
+        self.lbl_ass_file = ft.Text("ASS: не загружен", size=ds.font_size(11), color=pal.muted)
+        self.badge_syl_count = ft.Container(
+            content=ft.Text("0 слогов", size=ds.font_size(10), weight=ft.FontWeight.BOLD, color=pal.fg),
+            bgcolor=pal.raised,
+            padding=ft.Padding(6, 2, 6, 2),
+            border_radius=4,
+            border=ft.Border.all(1, pal.border),
+        )
         self.btn_open_ass = ft.FilledButton(
-            "ASS",
-            icon=ft.Icons.FILE_OPEN_OUTLINED,
-            style=ft.ButtonStyle(padding=ft.Padding(6, 2, 6, 2), bgcolor=pal.raised, color=pal.fg),
-            tooltip="Открыть субтитры ASS",
+            "ASS…",
+            style=ft.ButtonStyle(padding=ft.Padding(8, 2, 8, 2), bgcolor=pal.raised, color=pal.fg),
+            tooltip="Открыть ASS файл",
             on_click=lambda e: self.ass_picker.pick_files(
                 dialog_title="Выберите ASS файл",
                 allowed_extensions=["ass", "txt"],
                 allow_multiple=False,
             ),
         )
-
-        self.btn_lyrics = ft.IconButton(
-            icon=ft.Icons.ARTICLE_OUTLINED,
-            tooltip="Полный текст песни (все строки)",
-            icon_size=ds.icon_size(18),
-            icon_color=pal.fg,
-            on_click=lambda e: self._open_full_text_dialog(),
+        self.btn_new_ass = ft.FilledButton(
+            "ASS+",
+            style=ft.ButtonStyle(padding=ft.Padding(8, 2, 8, 2), bgcolor=pal.raised, color=pal.fg),
+            tooltip="Создать новый пустой ASS",
+            on_click=lambda e: self._new_blank_ass(),
+        )
+        self.btn_transfer_sps = ft.FilledButton(
+            "🎯 В SPS",
+            style=ft.ButtonStyle(padding=ft.Padding(8, 2, 8, 2), bgcolor=pal.accent, color=pal.accent_fg),
+            tooltip="Перейти к точному измерению SPS",
+            on_click=lambda e: self._transfer_to_sps(),
         )
 
-        self.btn_undo = ft.IconButton(
-            icon=ft.Icons.UNDO,
-            tooltip="Отменить (Undo)",
-            icon_size=ds.icon_size(18),
-            icon_color=pal.muted,
-            disabled=True,
-            on_click=lambda e: self._undo(),
-        )
-
-        self.btn_multi_select = ft.IconButton(
-            icon=ft.Icons.CHECK_BOX_OUTLINE_BLANK,
-            tooltip="Режим выбора нескольких слогов",
-            icon_size=ds.icon_size(18),
-            icon_color=pal.muted,
-            on_click=lambda e: self._toggle_multi_select(),
-        )
-
-        self.top_header = ft.Row(
+        self.subheader_row = ft.Row(
             [
-                ft.Row([self.app_title_text, self.stats_text], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                ft.Row(
-                    [
-                        self.btn_undo,
-                        self.btn_multi_select,
-                        self.btn_lyrics,
-                        self.btn_open_ass,
-                    ],
-                    spacing=2,
-                    tight=True,
-                ),
+                ft.Row([self.lbl_logo, self.lbl_ass_file, self.badge_syl_count], spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                ft.Row([self.btn_open_ass, self.btn_new_ass, self.btn_transfer_sps], spacing=4, tight=True),
             ],
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            scroll=ft.ScrollMode.AUTO,
         )
 
-        # Active Syllable Docked Toolbar
-        self.docked_toolbar = ft.Container(visible=False)
+        # ==================== 2. PC MODERN TRANSPORT BAR ====================
+        self.btn_play_toggle = ft.FilledButton(
+            "▶/■",
+            style=ft.ButtonStyle(padding=ft.Padding(10, 4, 10, 4), bgcolor=pal.accent, color=pal.accent_fg),
+            tooltip="Play / Stop с возвратом",
+            on_click=lambda e: self.audio_timeline.toggle_play(),
+        )
+        self.btn_stop = ft.FilledButton(
+            "■",
+            style=ft.ButtonStyle(padding=ft.Padding(8, 4, 8, 4), bgcolor=pal.raised, color=pal.fg),
+            tooltip="Stop",
+            on_click=lambda e: self.audio_timeline.stop_audio(),
+        )
 
-        # Floating Multi-Selection Action Bar
-        self.floating_multi_bar = ft.Container(
-            visible=False,
-            padding=ft.Padding(8, 4, 8, 4),
-            border_radius=8,
+        # Range Marker Buttons
+        self.btn_mark_start = ft.FilledButton("|←", style=ft.ButtonStyle(padding=ft.Padding(6, 2, 6, 2), bgcolor=pal.raised, color=pal.fg), tooltip="|←: поставить метку старта", on_click=lambda e: self.audio_timeline.set_range_in())
+        self.btn_play_start = ft.FilledButton("|▶", style=ft.ButtonStyle(padding=ft.Padding(6, 2, 6, 2), bgcolor=pal.raised, color=pal.fg), tooltip="|▶: проиграть от метки старта", on_click=lambda e: self._play_from_start_marker())
+        self.btn_mark_stop = ft.FilledButton("→|", style=ft.ButtonStyle(padding=ft.Padding(6, 2, 6, 2), bgcolor=pal.raised, color=pal.fg), tooltip="→|: поставить метку окончания", on_click=lambda e: self.audio_timeline.set_range_out())
+        self.btn_play_stop = ft.FilledButton("▶|", style=ft.ButtonStyle(padding=ft.Padding(6, 2, 6, 2), bgcolor=pal.raised, color=pal.fg), tooltip="▶|: проиграть до метки окончания", on_click=lambda e: self._play_to_stop_marker())
+        self.btn_play_range = ft.FilledButton("|▶|", style=ft.ButtonStyle(padding=ft.Padding(8, 2, 8, 2), bgcolor=pal.accent, color=pal.accent_fg), tooltip="|▶|: проиграть между метками", on_click=lambda e: self.audio_timeline.play_marked_range())
+        self.btn_range_sel = ft.FilledButton("↔", style=ft.ButtonStyle(padding=ft.Padding(6, 2, 6, 2), bgcolor=pal.raised, color=pal.fg), tooltip="↔: поставить метки по выделению", on_click=lambda e: self._set_range_from_selection())
+        self.btn_clear_range = ft.FilledButton("×", style=ft.ButtonStyle(padding=ft.Padding(6, 2, 6, 2), bgcolor=pal.raised, color=pal.fg), tooltip="×: очистить обе метки", on_click=lambda e: self.audio_timeline.clear_range())
+
+        self.lbl_playback_limits = ft.Text("[ 0:00.00 .. 0:00.00 ]", size=ds.font_size(10), color=pal.muted)
+
+        # Transport Row 1: Play/Stop + Markers
+        self.transport_row1 = ft.Row(
+            [
+                self.btn_play_toggle,
+                self.btn_stop,
+                ft.Text("Метки:", size=ds.font_size(11), weight=ft.FontWeight.BOLD, color=pal.fg),
+                self.btn_mark_start,
+                self.btn_play_start,
+                self.btn_mark_stop,
+                self.btn_play_stop,
+                self.btn_play_range,
+                self.btn_range_sel,
+                self.btn_clear_range,
+                self.lbl_playback_limits,
+            ],
+            spacing=3,
+            scroll=ft.ScrollMode.AUTO,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+        # Transport Row 2: Speed Presets & Toggles
+        self.lbl_speed_text = ft.Text("1.00×", size=ds.font_size(11), weight=ft.FontWeight.BOLD, color=pal.fg)
+        self.speed_pills = [
+            ft.TextButton(
+                label,
+                style=ft.ButtonStyle(padding=ft.Padding(4, 1, 4, 1), bgcolor=pal.raised, color=pal.fg),
+                on_click=lambda e, s=val: self._set_speed(s),
+            )
+            for val, label in [(0.5, "0.5×"), (0.75, "0.75×"), (1.0, "1×"), (1.25, "1.25×"), (1.5, "1.5×")]
+        ]
+
+        self.transport_row2 = ft.Row(
+            [
+                ft.Text("Скорость:", size=ds.font_size(11), color=pal.muted),
+                self.lbl_speed_text,
+                *self.speed_pills,
+                ft.Container(width=4),
+                ft.Text("Аудио-слой:", size=ds.font_size(11), color=pal.muted),
+                ft.TextButton("Волна", style=ft.ButtonStyle(padding=ft.Padding(4, 1, 4, 1), color=pal.accent), on_click=lambda e: self.audio_timeline.set_audio_mode("waveform")),
+                ft.TextButton("Спектр", style=ft.ButtonStyle(padding=ft.Padding(4, 1, 4, 1), color=pal.fg), on_click=lambda e: self.audio_timeline.set_audio_mode("spectrogram")),
+                ft.TextButton("Оба", style=ft.ButtonStyle(padding=ft.Padding(4, 1, 4, 1), color=pal.fg), on_click=lambda e: self.audio_timeline.set_audio_mode("both")),
+            ],
+            spacing=3,
+            scroll=ft.ScrollMode.AUTO,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+        self.transport_card = ft.Container(
+            content=ft.Column([self.transport_row1, self.transport_row2], spacing=3, tight=True),
             bgcolor=pal.panel,
-            border=ft.Border.all(1.5, pal.accent),
+            padding=ft.Padding(6, 4, 6, 4),
+            border_radius=6,
+            border=ft.Border.all(1, pal.border),
         )
 
-        # Syllables List
-        self.syllables_list = ft.ListView(
-            expand=True,
-            spacing=4,
-            padding=ft.Padding(2, 2, 2, 2),
+        # ==================== 3. BOTTOM DOCK (THE 2 PC CARDS) ====================
+
+        # --- PC CARD 1: Syllable text & Romanization ---
+        self.card1_title = ft.Text("Слог: —", size=ds.font_size(12), weight=ft.FontWeight.BOLD, color=pal.fg)
+        self.btn_play_syl = ft.FilledButton("▶ Слог", style=ft.ButtonStyle(padding=ft.Padding(8, 2, 8, 2), bgcolor=pal.accent, color=pal.accent_fg), tooltip="Прослушать выделенный слог", on_click=lambda e: self._play_selected_syllable())
+        self.btn_prev_syl = ft.FilledButton("←", style=ft.ButtonStyle(padding=ft.Padding(6, 2, 6, 2), bgcolor=pal.raised, color=pal.fg), tooltip="Предыдущий слог", on_click=lambda e: self._navigate_syllable(-1))
+        self.btn_next_syl = ft.FilledButton("→", style=ft.ButtonStyle(padding=ft.Padding(6, 2, 6, 2), bgcolor=pal.raised, color=pal.fg), tooltip="Следующий слог", on_click=lambda e: self._navigate_syllable(1))
+
+        self.txt_syllable_editor = ft.TextField(
+            label="Текст слога",
+            dense=True,
+            text_size=ds.font_size(13),
+            on_change=self._on_syllable_text_changed,
         )
 
-        self.empty_placeholder = ft.Container(
+        self.chk_romanize = ft.Checkbox(label="Romanize", value=False, on_change=self._on_romanize_toggle)
+        self.txt_romanization = ft.TextField(
+            label="Над слогом",
+            dense=True,
+            text_size=ds.font_size(12),
+            on_change=self._on_romanization_changed,
+        )
+
+        self.btn_split_at_cursor = ft.FilledButton(
+            "Разделить по курсору",
+            style=ft.ButtonStyle(padding=ft.Padding(8, 3, 8, 3), bgcolor=pal.raised, color=pal.fg),
+            tooltip="Разрезать слог точно по положению курсора плеера",
+            on_click=lambda e: self._split_at_cursor(),
+        )
+        self.btn_unspoken = ft.FilledButton(
+            "[Непроизнесённое]",
+            style=ft.ButtonStyle(padding=ft.Padding(8, 3, 8, 3), bgcolor=pal.raised, color=pal.fg),
+            tooltip="Пометить слог как [непроизнесённый] (исключается из анализа)",
+            on_click=lambda e: self._toggle_unspoken(),
+        )
+
+        self.pc_card1 = ft.Container(
             content=ft.Column(
                 [
-                    ft.Icon(ft.Icons.AUDIO_FILE_OUTLINED, size=36, color=pal.muted),
-                    ft.Text("Откройте ASS или аудиофайл для начала работы", size=ds.font_size(12), color=pal.muted),
+                    ft.Row([self.card1_title, ft.Row([self.btn_play_syl, self.btn_prev_syl, self.btn_next_syl], spacing=3, tight=True)], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                    self.txt_syllable_editor,
+                    ft.Row([self.chk_romanize, ft.Container(content=self.txt_romanization, expand=True)], spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                    ft.Row([self.btn_split_at_cursor, self.btn_unspoken], spacing=4, scroll=ft.ScrollMode.AUTO),
                 ],
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                alignment=ft.MainAxisAlignment.CENTER,
+                spacing=4,
+                tight=True,
             ),
-            alignment=ft.Alignment.CENTER,
-            padding=20,
-        )
-
-        # Left / Right Split Containers for 20:9 Landscape
-        self.left_column = ft.Column(
-            [
-                self.audio_timeline,
-                self.jog_wheel,
-            ],
-            spacing=4,
+            bgcolor=pal.panel,
+            padding=ft.Padding(8, 6, 8, 6),
+            border_radius=7,
+            border=ft.Border.all(1, pal.border),
             expand=True,
         )
 
-        self.right_column = ft.Column(
+        # --- PC CARD 2: Timing, Tags, History & Burst ---
+        self.btn_insert = ft.FilledButton("➕ Вставить", style=ft.ButtonStyle(padding=ft.Padding(6, 2, 6, 2), bgcolor=pal.raised, color=pal.fg), on_click=lambda e: self._insert_syllable())
+        self.btn_split = ft.FilledButton("✂ Разделить", style=ft.ButtonStyle(padding=ft.Padding(6, 2, 6, 2), bgcolor=pal.raised, color=pal.fg), on_click=lambda e: self._split_syllable_50())
+        self.btn_merge = ft.FilledButton("🔗 Совместить", style=ft.ButtonStyle(padding=ft.Padding(6, 2, 6, 2), bgcolor=pal.raised, color=pal.fg), on_click=lambda e: self._merge_current())
+        self.btn_delete = ft.FilledButton("🗑 Удалить", style=ft.ButtonStyle(padding=ft.Padding(6, 2, 6, 2), bgcolor=pal.panel, color=pal.danger), on_click=lambda e: self._delete_current())
+
+        self.timing_ops_row = ft.Row(
             [
-                self.docked_toolbar,
-                self.floating_multi_bar,
-                self.syllables_list,
+                ft.Text("Тайминг:", size=ds.font_size(11), weight=ft.FontWeight.BOLD, color=pal.fg),
+                self.btn_insert,
+                self.btn_split,
+                self.btn_merge,
+                self.btn_delete,
             ],
-            spacing=4,
+            spacing=3,
+            scroll=ft.ScrollMode.AUTO,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+        self.dd_tag_type = ft.Dropdown(
+            options=[
+                ft.dropdown.Option("k", "\\k (резкий)"),
+                ft.dropdown.Option("kf", "\\kf (плавный)"),
+                ft.dropdown.Option("ko", "\\ko (outline)"),
+                ft.dropdown.Option("K", "\\K (плавный alias)"),
+            ],
+            value="kf",
+            dense=True,
+            text_size=ds.font_size(12),
+            expand=True,
+            on_select=self._on_tag_dropdown_change,
+        )
+        self.btn_apply_tag = ft.FilledButton(
+            "Применить тип",
+            style=ft.ButtonStyle(padding=ft.Padding(6, 2, 6, 2), bgcolor=pal.raised, color=pal.fg),
+            on_click=lambda e: self._apply_tag_type(),
+        )
+
+        self.tag_row = ft.Row(
+            [
+                ft.Text("Тип:", size=ds.font_size(11), weight=ft.FontWeight.BOLD, color=pal.fg),
+                self.dd_tag_type,
+                self.btn_apply_tag,
+            ],
+            spacing=3,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+        self.btn_undo = ft.FilledButton("↶", style=ft.ButtonStyle(padding=ft.Padding(8, 2, 8, 2), bgcolor=pal.raised, color=pal.fg), tooltip="Undo", on_click=lambda e: self._undo())
+        self.btn_redo = ft.FilledButton("↷", style=ft.ButtonStyle(padding=ft.Padding(8, 2, 8, 2), bgcolor=pal.raised, color=pal.fg), tooltip="Redo", on_click=lambda e: self._redo())
+        self.btn_save_ass = ft.FilledButton("💾 Сохранить", style=ft.ButtonStyle(padding=ft.Padding(8, 2, 8, 2), bgcolor=pal.success, color=pal.accent_fg), on_click=lambda e: self._save_ass_direct())
+        self.btn_full_text = ft.FilledButton("📄 Весь текст…", style=ft.ButtonStyle(padding=ft.Padding(8, 2, 8, 2), bgcolor=pal.raised, color=pal.fg), on_click=lambda e: self._open_full_text_dialog())
+
+        self.history_row = ft.Row(
+            [
+                self.btn_undo,
+                self.btn_redo,
+                self.btn_save_ass,
+                self.btn_full_text,
+            ],
+            spacing=3,
+            scroll=ft.ScrollMode.AUTO,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+        self.lbl_burst_state = ft.Text("Burst: —", size=ds.font_size(10), color=pal.muted)
+        self.btn_color_burst = ft.FilledButton("🔥 Окрасить", style=ft.ButtonStyle(padding=ft.Padding(6, 2, 6, 2), bgcolor=pal.danger, color=pal.accent_fg), on_click=lambda e: self._color_burst(True))
+        self.btn_uncolor_burst = ft.FilledButton("Снять", style=ft.ButtonStyle(padding=ft.Padding(6, 2, 6, 2), bgcolor=pal.raised, color=pal.fg), on_click=lambda e: self._color_burst(False))
+        self.btn_export_audio = ft.FilledButton("🎵 Экспорт WAV…", style=ft.ButtonStyle(padding=ft.Padding(6, 2, 6, 2), bgcolor=pal.raised, color=pal.fg), on_click=lambda e: self._export_selected_audio())
+
+        self.burst_row = ft.Row(
+            [
+                self.lbl_burst_state,
+                self.btn_color_burst,
+                self.btn_uncolor_burst,
+                self.btn_export_audio,
+            ],
+            spacing=3,
+            scroll=ft.ScrollMode.AUTO,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
+        self.pc_card2 = ft.Container(
+            content=ft.Column(
+                [
+                    self.timing_ops_row,
+                    self.tag_row,
+                    self.history_row,
+                    self.burst_row,
+                ],
+                spacing=3,
+                tight=True,
+            ),
+            bgcolor=pal.panel,
+            padding=ft.Padding(8, 6, 8, 6),
+            border_radius=7,
+            border=ft.Border.all(1, pal.border),
             expand=True,
         )
 
-        # Main Layout Container
+        # Docked toolbar wrapper for compatibility with tests
+        self.docked_toolbar = ft.Container(content=self.pc_card2, visible=False)
+
+        # Mobile Mode Switcher Tabs for Portrait
+        self.mobile_tab_bar = ft.Row(
+            [
+                ft.TextButton("📝 Слог и Текст", style=ft.ButtonStyle(color=pal.accent), on_click=lambda e: self._switch_mobile_dock("text")),
+                ft.TextButton("⚙ Тайминг и Действия", style=ft.ButtonStyle(color=pal.muted), on_click=lambda e: self._switch_mobile_dock("actions")),
+                ft.TextButton("📑 Все строки", style=ft.ButtonStyle(color=pal.muted), on_click=lambda e: self._switch_mobile_dock("all")),
+            ],
+            spacing=4,
+            scroll=ft.ScrollMode.AUTO,
+        )
+
+        # Lines Overview List (Quick jump list)
+        self.lines_list_view = ft.ListView(expand=True, spacing=3, padding=2)
+
+        # Main dynamic body container
         self.body_container = ft.Container(expand=True)
+
         self.content = ft.Column(
             [
-                self.top_header,
+                self.subheader_row,
+                self.transport_card,
                 self.body_container,
             ],
-            spacing=2,
+            spacing=3,
             expand=True,
         )
 
         self._refresh_ui()
+
+    # ------------------ Contract Properties ------------------
 
     @property
     def selected_syllable_id(self) -> Optional[str]:
@@ -269,127 +457,329 @@ class EditorView(ft.Container):
             sb.open = True
             p.update()
 
+    def _handle_audio_loaded(self, name: str, data: bytes, waveform, spectrogram):
+        if self.on_audio_loaded_cb:
+            self.on_audio_loaded_cb(name, data, waveform, spectrogram)
+
+    def _on_timeline_time_changed(self, pos_sec: float):
+        if self.audio_timeline.range_start is not None and self.audio_timeline.range_end is not None:
+            self.lbl_playback_limits.value = f"[ {format_ass_time(self.audio_timeline.range_start)} .. {format_ass_time(self.audio_timeline.range_end)} ]"
+        else:
+            self.lbl_playback_limits.value = f"Курсор: {pos_sec:.3f}с"
+        try:
+            self.lbl_playback_limits.update()
+        except Exception:
+            pass
+
+    def _on_timeline_syllable_clicked(self, sid: str):
+        if self.multi_select_mode:
+            if sid in self.selected_syllable_ids:
+                self.selected_syllable_ids.remove(sid)
+            else:
+                self.selected_syllable_ids.append(sid)
+        else:
+            self.selected_syllable_ids = [sid]
+        self._refresh_ui()
+
     def _push_undo(self):
         if self.document:
             self._undo_stack.append(self.document.dumps())
             if len(self._undo_stack) > 30:
                 self._undo_stack.pop(0)
-            self.btn_undo.disabled = False
-            self.btn_undo.icon_color = get_current_palette().accent
-            self._safe_update()
+            self._redo_stack.clear()
 
     def _undo(self):
         if not self._undo_stack or not self.document:
             return
-        last_state = self._undo_stack.pop()
-        self.document = AssDocument.from_text(last_state)
-        if not self._undo_stack:
-            self.btn_undo.disabled = True
-            self.btn_undo.icon_color = get_current_palette().muted
+        self._redo_stack.append(self.document.dumps())
+        last = self._undo_stack.pop()
+        self.document = AssDocument.from_text(last)
         if self.on_document_changed:
             self.on_document_changed(self.document)
         self._refresh_ui()
-        self._show_snack("Действие отменено (Undo)")
+        self._show_snack("↶ Действие отменено (Undo)")
 
-    def _toggle_multi_select(self):
-        self.multi_select_mode = not self.multi_select_mode
+    def _redo(self):
+        if not self._redo_stack or not self.document:
+            return
+        self._undo_stack.append(self.document.dumps())
+        next_state = self._redo_stack.pop()
+        self.document = AssDocument.from_text(next_state)
+        if self.on_document_changed:
+            self.on_document_changed(self.document)
+        self._refresh_ui()
+        self._show_snack("↷ Повторено (Redo)")
+
+    def _new_blank_ass(self):
+        self._push_undo()
+        blank = (
+            "[Script Info]\n"
+            "Title: New Karaoke\n"
+            "ScriptType: v4.00+\n\n"
+            "[V4+ Styles]\n"
+            "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
+            "Style: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,2,2,10,10,10,1\n\n"
+            "[Events]\n"
+            "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+            "Dialogue: 0,0:00:00.00,0:00:02.00,Default,,0,0,0,,{\\k100}Kara{\\k100}oke\n"
+        )
+        self.load_ass_text(blank)
+        self._show_snack("Создан пустой проект ASS+")
+
+    def load_ass_text(self, text: str):
+        try:
+            doc = AssDocument.from_text(text)
+            self.document = doc
+            self.selected_syllable_ids = []
+            if self.on_document_changed:
+                self.on_document_changed(doc)
+            self._refresh_ui()
+        except Exception as ex:
+            self._show_snack(f"Ошибка загрузки ASS: {ex}", is_error=True)
+
+    def _refresh_ui(self):
         pal = get_current_palette()
-        self.btn_multi_select.icon = ft.Icons.CHECK_BOX if self.multi_select_mode else ft.Icons.CHECK_BOX_OUTLINE_BLANK
-        self.btn_multi_select.icon_color = pal.accent if self.multi_select_mode else pal.muted
-        if not self.multi_select_mode and len(self.selected_syllable_ids) > 1:
-            self.selected_syllable_ids = self.selected_syllable_ids[:1]
-        self._refresh_ui()
+        ds = get_display_settings()
+        p = self._get_page()
+        is_landscape = bool(p and p.width and p.height and p.width > p.height)
 
-    def _deselect(self):
-        self.selected_syllable_ids = []
-        self._refresh_ui()
-
-    def _handle_audio_loaded(self, name: str, data: bytes, waveform, spectrogram):
-        if self.on_audio_loaded_cb:
-            self.on_audio_loaded_cb(name, data, waveform, spectrogram)
-
-    def _on_cursor_moved(self, pos_sec: float):
-        if self.selected_syllable_id and self.document:
-            syl = self._find_syllable(self.selected_syllable_id)
-            if syl:
-                self._update_jog_readout(syl)
-
-    def _find_syllable(self, sid: str) -> Optional[KaraokeSyllable]:
         if not self.document:
-            return None
-        return next((s for s in self.document.karaoke_syllables() if s.id == sid), None)
+            self.lbl_ass_file.value = "ASS: не загружен"
+            self.badge_syl_count.content.value = "0 слогов"
+            self.card1_title.value = "Слог: —"
+            self.txt_syllable_editor.value = ""
+            self.txt_syllable_editor.disabled = True
+            self.txt_romanization.value = ""
+            self.txt_romanization.disabled = True
+            self.docked_toolbar.visible = False
+            self.audio_timeline.set_active_bounds(None, None)
+            self._rebuild_layout(is_landscape)
+            self._safe_update()
+            return
 
-    def _update_jog_readout(self, syl: KaraokeSyllable):
-        mode = self.jog_wheel.target_mode
-        if mode == "start":
-            self.jog_wheel.set_value_text(f"Start: {syl.start:.3f}с")
-        elif mode == "end":
-            self.jog_wheel.set_value_text(f"End: {syl.end:.3f}с")
+        all_syls = list(self.document.karaoke_syllables())
+        total = len(all_syls)
+        burst_count = sum(1 for s in all_syls if s.burst_marked)
+        self.badge_syl_count.content.value = f"{total} слогов" + (f" (🔥{burst_count})" if burst_count else "")
+
+        # Sync syllables with timeline for waveform/spectrogram slice drawing
+        mt = MeasurementTimeline.from_karaoke(all_syls)
+        first_id = self.selected_syllable_id
+        self.audio_timeline.set_syllables(mt.syllables, first_id)
+
+        # Update PC Cards
+        selected_syls = [s for s in all_syls if s.id in self.selected_syllable_ids]
+        if selected_syls:
+            s = selected_syls[0]
+            self.docked_toolbar.visible = True
+            dur_ms = s.duration_cs * 10
+            idx = next((i for i, item in enumerate(all_syls) if item.id == s.id), 0)
+            self.card1_title.value = f"Слог: {s.id} (#{idx}) [{format_ass_time(s.start)}–{format_ass_time(s.end)}] ({dur_ms}мс)"
+            self.txt_syllable_editor.disabled = False
+            self.txt_syllable_editor.value = s.visible_text.strip() or s.raw_text.strip()
+            self.txt_romanization.disabled = False
+            self.txt_romanization.value = s.romanization or ""
+            self.chk_romanize.value = bool(s.romanization)
+            self.dd_tag_type.value = s.tag_type.value
+            self.lbl_burst_state.value = f"Burst: {'🔥 ДА' if s.burst_marked else 'НЕТ'}"
+            self.audio_timeline.focus_syllable(s.start, s.end, syllable_id=s.id)
         else:
-            self.jog_wheel.set_value_text(f"Dur: {syl.duration_cs * 10}мс")
+            self.docked_toolbar.visible = False
+            self.card1_title.value = "Слог: не выбран"
+            self.txt_syllable_editor.disabled = True
+            self.txt_syllable_editor.value = ""
+            self.txt_romanization.disabled = True
+            self.txt_romanization.value = ""
+            self.lbl_burst_state.value = "Burst: —"
+            self.audio_timeline.set_active_bounds(None, None)
 
-    def _on_jog_nudge(self, mode: str, delta_sec: float):
+        self._build_lines_overview(all_syls)
+        self._rebuild_layout(is_landscape)
+        self._safe_update()
+
+    def _build_lines_overview(self, all_syls: list[KaraokeSyllable]):
+        pal = get_current_palette()
+        self.lines_list_view.controls.clear()
+        events = [e for e in self.document.events() if e.kind == "Dialogue"] if self.document else []
+
+        by_line: dict[int, list[KaraokeSyllable]] = {}
+        for s in all_syls:
+            by_line.setdefault(s.event_line_index, []).append(s)
+
+        for ev in events:
+            syls = by_line.get(ev.line_index, [])
+            if not syls:
+                continue
+            clean_text = " ".join(s.visible_text.strip() or s.raw_text.strip() for s in syls)
+            dur_ms = int(round((ev.end - ev.start) * 1000))
+
+            def _jump(e, s_list=syls):
+                if s_list:
+                    self.selected_syllable_ids = [s.id for s in s_list]
+                    self._refresh_ui()
+
+            self.lines_list_view.controls.append(
+                ft.Container(
+                    content=ft.Row(
+                        [
+                            ft.Text(f"#{ev.line_index}", size=10, weight=ft.FontWeight.BOLD, color=pal.accent),
+                            ft.Text(f"{format_ass_time(ev.start)}–{format_ass_time(ev.end)} ({dur_ms}мс)", size=9, color=pal.muted),
+                            ft.Text(clean_text or "...", size=11, color=pal.fg, expand=True, overflow=ft.TextOverflow.ELLIPSIS),
+                            ft.IconButton(icon=ft.Icons.ARROW_FORWARD, icon_size=15, icon_color=pal.accent, on_click=_jump),
+                        ],
+                        spacing=4,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    bgcolor=pal.raised,
+                    padding=ft.Padding(6, 2, 6, 2),
+                    border_radius=4,
+                    border=ft.Border.all(1, pal.border),
+                )
+            )
+
+    def _rebuild_layout(self, is_landscape: bool):
+        pal = get_current_palette()
+        if is_landscape:
+            # 2-Column Desktop Workbench split for widescreen 20:9
+            self.body_container.content = ft.Row(
+                [
+                    # Left Column (52%): Timeline + Transport details
+                    ft.Container(
+                        content=ft.Column(
+                            [
+                                self.audio_timeline,
+                                self.lines_list_view,
+                            ],
+                            spacing=3,
+                            expand=True,
+                        ),
+                        expand=11,
+                    ),
+                    ft.VerticalDivider(width=1, color=pal.border),
+                    # Right Column (48%): The 2 authentic PC Cards
+                    ft.Container(
+                        content=ft.Column(
+                            [
+                                self.pc_card1,
+                                self.pc_card2,
+                            ],
+                            spacing=3,
+                            scroll=ft.ScrollMode.AUTO,
+                            expand=True,
+                        ),
+                        expand=10,
+                    ),
+                ],
+                spacing=4,
+                expand=True,
+            )
+        else:
+            # Portrait: Timeline on top, then PC Cards via mobile switcher tabs
+            active_card_widget = self.pc_card1 if self._active_mobile_card == "text" else (self.pc_card2 if self._active_mobile_card == "actions" else self.lines_list_view)
+            self.body_container.content = ft.Column(
+                [
+                    self.audio_timeline,
+                    self.mobile_tab_bar,
+                    ft.Container(content=active_card_widget, expand=True),
+                ],
+                spacing=3,
+                expand=True,
+            )
+
+    def _switch_mobile_dock(self, mode: str):
+        self._active_mobile_card = mode
+        pal = get_current_palette()
+        for i, (tab_btn, tab_mode) in enumerate(zip(self.mobile_tab_bar.controls, ["text", "actions", "all"])):
+            tab_btn.style.color = pal.accent if tab_mode == mode else pal.muted
+        self._rebuild_layout(is_landscape=False)
+        self._safe_update()
+
+    # ------------------ PC Transport Actions ------------------
+
+    def _set_speed(self, speed: float):
+        self.audio_timeline.set_playback_speed(speed)
+        self.lbl_speed_text.value = f"{speed:g}×"
+        self._safe_update()
+
+    def _play_from_start_marker(self):
+        if self.audio_timeline.range_start is not None:
+            self.audio_timeline.play_range(self.audio_timeline.range_start, self.audio_timeline.total_duration)
+        else:
+            self._show_snack("Метка старта |← не установлена")
+
+    def _play_to_stop_marker(self):
+        if self.audio_timeline.range_end is not None:
+            self.audio_timeline.play_range(self.audio_timeline.center_time, self.audio_timeline.range_end)
+        else:
+            self._show_snack("Метка окончания →| не установлена")
+
+    def _set_range_from_selection(self):
+        syl = self._get_selected_syl()
+        if syl:
+            self.audio_timeline.range_start = syl.start
+            self.audio_timeline.range_end = syl.end
+            self.audio_timeline._refresh_timeline()
+            self._on_timeline_time_changed(self.audio_timeline.center_time)
+            self._show_snack(f"Метки выставлены по слогу: {syl.id}")
+        else:
+            self._show_snack("Сначала выберите слог")
+
+    def _play_selected_syllable(self):
+        syl = self._get_selected_syl()
+        if syl:
+            self.audio_timeline.play_range(syl.start, syl.end)
+        else:
+            self._show_snack("Выберите слог для воспроизведения")
+
+    def _navigate_syllable(self, step: int):
+        if not self.document:
+            return
+        all_syls = list(self.document.karaoke_syllables())
+        if not all_syls:
+            return
+        curr_id = self.selected_syllable_id
+        idx = next((i for i, s in enumerate(all_syls) if s.id == curr_id), -1)
+        new_idx = max(0, min(len(all_syls) - 1, idx + step))
+        self.selected_syllable_ids = [all_syls[new_idx].id]
+        self._refresh_ui()
+
+    def _get_selected_syl(self) -> Optional[KaraokeSyllable]:
         if not self.document or not self.selected_syllable_id:
-            return
-        syl = self._find_syllable(self.selected_syllable_id)
-        if not syl:
-            return
+            return None
+        return next((s for s in self.document.karaoke_syllables() if s.id == self.selected_syllable_id), None)
 
-        delta_cs = int(round(delta_sec * 100))
-        if delta_cs == 0:
-            delta_cs = 1 if delta_sec > 0 else -1
+    # ------------------ PC Card 1 Actions ------------------
 
-        try:
+    def _on_syllable_text_changed(self, e):
+        syl = self._get_selected_syl()
+        if syl and self.document and self.txt_syllable_editor.value != syl.visible_text:
             self._push_undo()
-            if mode == "start":
-                new_start = round(syl.start + delta_sec, 3)
-                set_syllable_start_at_time(self.document, syl.id, new_start)
-            elif mode == "end":
-                new_end = round(syl.end + delta_sec, 3)
-                set_syllable_end_at_time(self.document, syl.id, new_end)
-            else:  # shift
-                shift_syllable(self.document, syl.id, delta_cs)
-
+            set_syllable_text(self.document, syl.id, self.txt_syllable_editor.value)
             if self.on_document_changed:
                 self.on_document_changed(self.document)
             self._refresh_ui()
-        except Exception as ex:
-            self._show_snack(f"Ошибка тайминга: {ex}", is_error=True)
 
-    def _on_jog_snap(self, boundary: str):
-        if not self.document or not self.selected_syllable_id:
-            return
-        syl = self._find_syllable(self.selected_syllable_id)
-        if not syl:
-            return
-        cursor_t = round(self.audio_timeline.center_time, 3)
+    def _on_romanize_toggle(self, e):
+        pass
 
-        try:
+    def _on_romanization_changed(self, e):
+        syl = self._get_selected_syl()
+        if syl and self.document and self.txt_romanization.value != syl.romanization:
             self._push_undo()
-            if boundary == "start":
-                set_syllable_start_at_time(self.document, syl.id, cursor_t)
-                self._show_snack(f"Начало выставлено по курсору: {cursor_t:.3f}с")
-            else:
-                set_syllable_end_at_time(self.document, syl.id, cursor_t)
-                self._show_snack(f"Конец выставлен по курсору: {cursor_t:.3f}с")
-
+            set_syllable_romanization(self.document, syl.id, self.txt_romanization.value)
             if self.on_document_changed:
                 self.on_document_changed(self.document)
             self._refresh_ui()
-        except Exception as ex:
-            self._show_snack(f"Ошибка привязки: {ex}", is_error=True)
 
-    def _on_jog_split(self):
-        if not self.document or not self.selected_syllable_id:
-            return
-        syl = self._find_syllable(self.selected_syllable_id)
-        if not syl:
+    def _split_at_cursor(self):
+        syl = self._get_selected_syl()
+        if not syl or not self.document:
+            self._show_snack("Выберите слог")
             return
         cursor_t = round(self.audio_timeline.center_time, 3)
         if not (syl.start < cursor_t < syl.end):
             self._show_snack(f"Курсор ({cursor_t:.3f}с) вне слога ({syl.start:.3f}с..{syl.end:.3f}с)", is_error=True)
             return
-
         try:
             self._push_undo()
             res = split_syllable_at_time(self.document, syl.id, cursor_t)
@@ -402,431 +792,172 @@ class EditorView(ft.Container):
         except Exception as ex:
             self._show_snack(f"Ошибка разделения: {ex}", is_error=True)
 
-    def _on_timeline_syllable_clicked(self, sid: str):
-        if self.multi_select_mode:
-            if sid in self.selected_syllable_ids:
-                self.selected_syllable_ids.remove(sid)
-            else:
-                self.selected_syllable_ids.append(sid)
+    def _toggle_unspoken(self):
+        syl = self._get_selected_syl()
+        if not syl or not self.document:
+            return
+        txt = syl.visible_text.strip()
+        if txt.startswith("[") and txt.endswith("]"):
+            new_txt = txt[1:-1].strip()
         else:
-            self.selected_syllable_ids = [sid]
+            new_txt = f"[{txt}]"
+        self._push_undo()
+        set_syllable_text(self.document, syl.id, new_txt)
+        if self.on_document_changed:
+            self.on_document_changed(self.document)
+        self._refresh_ui()
+        self._show_snack(f"Текст слога: {new_txt}")
+
+    # ------------------ PC Card 2 Actions ------------------
+
+    def _insert_syllable(self):
+        syl = self._get_selected_syl()
+        if not syl or not self.document:
+            return
+        try:
+            self._push_undo()
+            res = insert_after(self.document, syl.id)
+            if self.on_document_changed:
+                self.on_document_changed(self.document)
+            if res.selected_ids:
+                self.selected_syllable_ids = list(res.selected_ids)
+            self._refresh_ui()
+            self._show_snack("Вставлен новый karaoke-слог")
+        except Exception as ex:
+            self._show_snack(f"Ошибка вставки: {ex}", is_error=True)
+
+    def _split_syllable_50(self):
+        syl = self._get_selected_syl()
+        if not syl or not self.document:
+            return
+        try:
+            self._push_undo()
+            res = split_syllable(self.document, syl.id)
+            if self.on_document_changed:
+                self.on_document_changed(self.document)
+            if res.selected_ids:
+                self.selected_syllable_ids = list(res.selected_ids)
+            self._refresh_ui()
+            self._show_snack("Разделен karaoke-слог")
+        except Exception as ex:
+            self._show_snack(f"Ошибка разделения: {ex}", is_error=True)
+
+    def _merge_current(self):
+        if not self.document:
+            return
+        all_syls = list(self.document.karaoke_syllables())
+        if len(self.selected_syllable_ids) > 1:
+            # Multi-merge
+            ordered = [s.id for s in all_syls if s.id in self.selected_syllable_ids]
+            target_ids = ordered
+        else:
+            curr = self._get_selected_syl()
+            if not curr:
+                self._show_snack("Выберите слог для совмещения")
+                return
+            same_line = [s for s in all_syls if s.event_line_index == curr.event_line_index]
+            idx = next((i for i, s in enumerate(same_line) if s.id == curr.id), -1)
+            if idx >= 0 and idx + 1 < len(same_line):
+                target_ids = [curr.id, same_line[idx + 1].id]
+            else:
+                self._show_snack("Нет следующего слога в строке для слияния")
+                return
+
+        try:
+            self._push_undo()
+            res = merge_syllables(self.document, target_ids)
+            if self.on_document_changed:
+                self.on_document_changed(self.document)
+            if res.selected_ids:
+                self.selected_syllable_ids = list(res.selected_ids)
+            self._refresh_ui()
+            self._show_snack(f"Совмещено {len(target_ids)} слогов")
+        except Exception as ex:
+            self._show_snack(f"Ошибка слияния: {ex}", is_error=True)
+
+    def _delete_current(self):
+        if not self.document or not self.selected_syllable_ids:
+            return
+        try:
+            self._push_undo()
+            for sid in reversed(self.selected_syllable_ids):
+                delete_syllable(self.document, sid)
+            if self.on_document_changed:
+                self.on_document_changed(self.document)
+            self.selected_syllable_ids = []
+            self._refresh_ui()
+            self._show_snack("Удален karaoke-слог")
+        except Exception as ex:
+            self._show_snack(f"Ошибка удаления: {ex}", is_error=True)
+
+    def _on_tag_dropdown_change(self, e):
+        self._apply_tag_type()
+
+    def _apply_tag_type(self):
+        syl = self._get_selected_syl()
+        if not syl or not self.document:
+            return
+        tag = self.dd_tag_type.value or "kf"
+        self._push_undo()
+        set_tag_type(self.document, [syl.id], tag)
+        if self.on_document_changed:
+            self.on_document_changed(self.document)
+        self._refresh_ui()
+        self._show_snack(f"Тип тега слога: \\{tag}")
+
+    def _color_burst(self, mark: bool):
+        if not self.document or not self.selected_syllable_ids:
+            self._show_snack("Выберите слог для окраски")
+            return
+        self._push_undo()
+        if mark:
+            colour_burst(self.document, self.selected_syllable_ids)
+            self._show_snack("Burst-окраска применена")
+        else:
+            uncolour_burst(self.document, self.selected_syllable_ids)
+            self._show_snack("Burst-окраска снята")
+        if self.on_document_changed:
+            self.on_document_changed(self.document)
         self._refresh_ui()
 
-    def load_ass_text(self, text: str):
-        try:
-            doc = AssDocument.from_text(text)
-            self.document = doc
-            self.selected_syllable_ids = []
-            if self.on_document_changed:
-                self.on_document_changed(doc)
-            self._refresh_ui()
-        except Exception as ex:
-            self._show_snack(f"Ошибка разбора ASS: {ex}", is_error=True)
-
-    def _refresh_ui(self):
-        pal = get_current_palette()
-        ds = get_display_settings()
-        p = self._get_page()
-        is_landscape = bool(p and p.width and p.height and p.width > p.height)
-
-        if not self.document:
-            self.syllables_list.controls.clear()
-            self.syllables_list.controls.append(self.empty_placeholder)
-            self.stats_text.value = "0 сл"
-            self.docked_toolbar.visible = False
-            self.floating_multi_bar.visible = False
-            self.audio_timeline.set_active_bounds(None, None)
-            self._rebuild_layout(is_landscape)
-            self._safe_update()
+    def _export_selected_audio(self):
+        syl = self._get_selected_syl()
+        raw_bytes = getattr(self.audio_timeline, "current_audio_bytes", None)
+        if not syl or not raw_bytes:
+            self._show_snack("Загрузите аудиофайл и выберите слог для экспорта", is_error=True)
             return
 
-        all_syllables = list(self.document.karaoke_syllables())
-        total_syls = len(all_syllables)
-        burst_syls = sum(1 for s in all_syllables if s.burst_marked)
-        self.stats_text.value = f"{total_syls} сл (🔥{burst_syls})"
+        try:
+            # Pure Python WAV Slicer
+            in_io = io.BytesIO(raw_bytes)
+            with wave.open(in_io, "rb") as wf:
+                params = wf.getparams()
+                rate = wf.getframerate()
+                start_frame = int(syl.start * rate)
+                end_frame = int(syl.end * rate)
+                total_frames = wf.getnframes()
+                wf.setpos(min(start_frame, total_frames))
+                frames = wf.readframes(max(0, min(end_frame - start_frame, total_frames - start_frame)))
 
-        # Sync Syllables to Audio Timeline
-        mt = MeasurementTimeline.from_karaoke(all_syllables)
-        first_sel_id = self.selected_syllable_ids[0] if self.selected_syllable_ids else None
-        self.audio_timeline.set_syllables(mt.syllables, first_sel_id)
+            tmp_out = tempfile.NamedTemporaryFile(delete=False, suffix=f"_{syl.id.replace(':', '_')}.wav")
+            with wave.open(tmp_out.name, "wb") as out_wf:
+                out_wf.setparams(params)
+                out_wf.writeframes(frames)
+            tmp_out.close()
+            self._show_snack(f"Экспорт готов: {tmp_out.name}")
+        except Exception as ex:
+            self._show_snack(f"Ошибка экспорта аудио: {ex}", is_error=True)
 
-        # Build Syllable Cards list grouped by dialogue lines
-        self.syllables_list.controls.clear()
-        events = [e for e in self.document.events() if e.kind == "Dialogue"]
-        by_line: dict[int, list[KaraokeSyllable]] = {}
-        for s in all_syllables:
-            by_line.setdefault(s.event_line_index, []).append(s)
+    def _save_ass_direct(self):
+        if not self.document:
+            return
+        self._show_snack("Субтитры ASS готовы для сохранения/экспорта в пакете проекта")
 
-        for ev in events:
-            line_syls = by_line.get(ev.line_index, [])
-            if not line_syls:
-                continue
-            self.syllables_list.controls.append(self._build_line_card(ev, line_syls))
+    def _transfer_to_sps(self):
+        if self.on_jump_to_sps:
+            self.on_jump_to_sps(self.selected_syllable_id or "")
 
-        # Update Inspector & Floating Selection Bar
-        selected_syls = [s for s in all_syllables if s.id in self.selected_syllable_ids]
-
-        if len(selected_syls) > 1:
-            # Case 1: Multi-selection
-            self.docked_toolbar.visible = False
-            self._update_floating_multi_bar(selected_syls, all_syllables)
-            self.floating_multi_bar.visible = True
-            min_st = min(s.start for s in selected_syls)
-            max_en = max(s.end for s in selected_syls)
-            self.audio_timeline.focus_syllable(min_st, max_en, syllable_id=selected_syls[0].id)
-        elif len(selected_syls) == 1:
-            # Case 2: Single syllable selected
-            s = selected_syls[0]
-            self.floating_multi_bar.visible = False
-            self._update_single_syllable_inspector(s, all_syllables)
-            self.docked_toolbar.visible = True
-            self.jog_wheel.visible = True
-            self._update_jog_readout(s)
-            self.audio_timeline.focus_syllable(s.start, s.end, syllable_id=s.id)
-        else:
-            # Case 3: Nothing selected
-            self.docked_toolbar.visible = False
-            self.floating_multi_bar.visible = False
-            self.jog_wheel.visible = False
-            self.audio_timeline.set_active_bounds(None, None)
-
-        self._rebuild_layout(is_landscape)
-        self._safe_update()
-
-    def _rebuild_layout(self, is_landscape: bool):
-        """Adapt layout dynamically between portrait and 20:9 landscape."""
-        if is_landscape:
-            # 2-Column Split: Left = Timeline + Jog Wheel, Right = Inspector + Syllables
-            self.body_container.content = ft.Row(
-                [
-                    ft.Container(content=self.left_column, expand=11),
-                    ft.VerticalDivider(width=1, color=get_current_palette().border),
-                    ft.Container(content=self.right_column, expand=9),
-                ],
-                spacing=4,
-                expand=True,
-            )
-        else:
-            # Vertical Stack: Timeline -> Jog Wheel -> Inspector -> Syllables
-            self.body_container.content = ft.Column(
-                [
-                    self.audio_timeline,
-                    self.jog_wheel,
-                    self.docked_toolbar,
-                    self.floating_multi_bar,
-                    self.syllables_list,
-                ],
-                spacing=2,
-                expand=True,
-            )
-
-    def _build_line_card(self, ev, syls: list[KaraokeSyllable]) -> ft.Container:
-        pal = get_current_palette()
-        ds = get_display_settings()
-        dur_line_ms = int(round((ev.end - ev.start) * 1000))
-
-        line_header = ft.Row(
-            [
-                ft.Text(f"#{ev.line_index} | {format_ass_time(ev.start)}–{format_ass_time(ev.end)} ({dur_line_ms}мс)", size=ds.font_size(10), color=pal.muted),
-                ft.TextButton(
-                    "Строка целиком",
-                    style=ft.ButtonStyle(padding=ft.Padding(4, 1, 4, 1), color=pal.accent),
-                    on_click=lambda e, s_list=syls: self._select_all_in_line(s_list),
-                ),
-            ],
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        )
-
-        chips = [self._build_syllable_chip(s) for s in syls]
-
-        return ft.Container(
-            content=ft.Column(
-                [
-                    line_header,
-                    ft.Row(chips, wrap=True, spacing=3, run_spacing=3),
-                ],
-                spacing=2,
-            ),
-            bgcolor=pal.panel,
-            padding=ft.Padding(6, 4, 6, 4),
-            border_radius=7,
-            border=ft.Border.all(1, pal.border),
-        )
-
-    def _select_all_in_line(self, syls: list[KaraokeSyllable]):
-        self.selected_syllable_ids = [s.id for s in syls]
-        self._refresh_ui()
-
-    def _build_syllable_chip(self, s: KaraokeSyllable) -> ft.Container:
-        pal = get_current_palette()
-        ds = get_display_settings()
-        is_selected = s.id in self.selected_syllable_ids
-        is_burst = s.burst_marked
-        text = s.visible_text.strip() or s.raw_text.strip() or "..."
-        dur_ms = s.duration_cs * 10
-
-        if is_selected:
-            bg = pal.raised
-            border = ft.Border.all(2, pal.accent)
-            fg = pal.accent
-        elif is_burst:
-            bg = pal.danger
-            border = ft.Border.all(1, pal.danger)
-            fg = pal.accent_fg
-        else:
-            bg = pal.raised
-            border = ft.Border.all(1, pal.border)
-            fg = pal.fg
-
-        def _on_tap(e):
-            if self.multi_select_mode:
-                if s.id in self.selected_syllable_ids:
-                    self.selected_syllable_ids.remove(s.id)
-                else:
-                    self.selected_syllable_ids.append(s.id)
-            else:
-                self.selected_syllable_ids = [s.id]
-            self._refresh_ui()
-
-        prefix = "✓ " if (is_selected and len(self.selected_syllable_ids) > 1) else ("🔥 " if is_burst else "")
-
-        return ft.Container(
-            content=ft.Row(
-                [
-                    ft.Text(f"{prefix}{text}", size=ds.font_size(11), weight=ft.FontWeight.BOLD, color=fg),
-                    ft.Text(f"{dur_ms}мс", size=ds.font_size(9), color=fg if (is_selected or is_burst) else pal.muted),
-                ],
-                spacing=2,
-                tight=True,
-            ),
-            bgcolor=bg,
-            border=border,
-            padding=ft.Padding(5, 3, 5, 3),
-            border_radius=5,
-            ink=True,
-            on_click=_on_tap,
-        )
-
-    def _update_single_syllable_inspector(self, s: KaraokeSyllable, all_syllables: list[KaraokeSyllable]):
-        pal = get_current_palette()
-        ds = get_display_settings()
-        text = s.visible_text.strip() or s.raw_text.strip() or "..."
-        dur_ms = s.duration_cs * 10
-        idx = next((i for i, item in enumerate(all_syllables) if item.id == s.id), -1)
-
-        def _nav(step: int):
-            new_idx = idx + step
-            if 0 <= new_idx < len(all_syllables):
-                self.selected_syllable_ids = [all_syllables[new_idx].id]
-                self._refresh_ui()
-
-        # Action handlers
-        def _toggle_burst(e):
-            self._push_undo()
-            if s.burst_marked:
-                uncolour_burst(self.document, [s.id])
-            else:
-                colour_burst(self.document, [s.id])
-            if self.on_document_changed:
-                self.on_document_changed(self.document)
-            self._refresh_ui()
-
-        def _split_half(e):
-            try:
-                self._push_undo()
-                res = split_syllable(self.document, s.id)
-                if self.on_document_changed:
-                    self.on_document_changed(self.document)
-                if res.selected_ids:
-                    self.selected_syllable_ids = list(res.selected_ids)
-                self._refresh_ui()
-                self._show_snack("Слог разделён 50/50")
-            except Exception as ex:
-                self._show_snack(f"Ошибка разделения: {ex}", is_error=True)
-
-        def _insert(e):
-            try:
-                self._push_undo()
-                res = insert_after(self.document, s.id)
-                if self.on_document_changed:
-                    self.on_document_changed(self.document)
-                if res.selected_ids:
-                    self.selected_syllable_ids = list(res.selected_ids)
-                self._refresh_ui()
-                self._show_snack("Вставлен новый слог")
-            except Exception as ex:
-                self._show_snack(f"Ошибка вставки: {ex}", is_error=True)
-
-        def _delete(e):
-            try:
-                self._push_undo()
-                res = delete_syllable(self.document, s.id)
-                if self.on_document_changed:
-                    self.on_document_changed(self.document)
-                self.selected_syllable_ids = list(res.selected_ids) if res.selected_ids else []
-                self._refresh_ui()
-                self._show_snack("Слог удалён")
-            except Exception as ex:
-                self._show_snack(f"Ошибка удаления: {ex}", is_error=True)
-
-        # Inspector Row 1: Active Syllable Badge & Preview & Navigation
-        info_row = ft.Row(
-            [
-                ft.Row(
-                    [
-                        ft.Text(f"«{text}»", size=ds.font_size(13), weight=ft.FontWeight.BOLD, color=pal.accent),
-                        ft.Text(f"{dur_ms}мс (\\{s.tag_type.value})", size=ds.font_size(10), color=pal.muted),
-                    ],
-                    spacing=4,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    expand=True,
-                ),
-                ft.Row(
-                    [
-                        ft.IconButton(
-                            icon=ft.Icons.PLAY_CIRCLE_FILL,
-                            tooltip="Прослушать только этот слог",
-                            icon_size=18,
-                            icon_color=pal.accent,
-                            on_click=lambda e: self.audio_timeline.play_range(s.start, s.end),
-                        ),
-                        ft.IconButton(
-                            icon=ft.Icons.ARROW_BACK,
-                            tooltip="Предыдущий слог",
-                            icon_size=16,
-                            icon_color=pal.fg if idx > 0 else pal.muted,
-                            disabled=idx <= 0,
-                            on_click=lambda e: _nav(-1),
-                        ),
-                        ft.IconButton(
-                            icon=ft.Icons.ARROW_FORWARD,
-                            tooltip="Следующий слог",
-                            icon_size=16,
-                            icon_color=pal.fg if idx < len(all_syllables) - 1 else pal.muted,
-                            disabled=idx >= len(all_syllables) - 1,
-                            on_click=lambda e: _nav(1),
-                        ),
-                        ft.IconButton(
-                            icon=ft.Icons.CLOSE,
-                            tooltip="Снять выделение",
-                            icon_size=16,
-                            icon_color=pal.muted,
-                            on_click=lambda e: self._deselect(),
-                        ),
-                    ],
-                    spacing=0,
-                    tight=True,
-                ),
-            ],
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        )
-
-        # Inspector Row 2: Touch Quick Actions
-        actions_row = ft.Row(
-            [
-                ft.FilledButton("✏ Текст", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(6, 2, 6, 2)), on_click=lambda e: self._open_text_dialog(s)),
-                ft.FilledButton("⏱ Точный", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(6, 2, 6, 2)), on_click=lambda e: self._open_timing_dialog(s)),
-                ft.FilledButton("✂ 50/50", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(6, 2, 6, 2)), on_click=_split_half),
-                ft.FilledButton("🔥 Бёрст" if not s.burst_marked else "Снять 🔥", style=ft.ButtonStyle(bgcolor=pal.danger if not s.burst_marked else pal.panel, color=pal.accent_fg if not s.burst_marked else pal.fg, padding=ft.Padding(6, 2, 6, 2)), on_click=_toggle_burst),
-                ft.FilledButton("➕ Вставить", style=ft.ButtonStyle(bgcolor=pal.raised, color=pal.fg, padding=ft.Padding(6, 2, 6, 2)), on_click=_insert),
-                ft.FilledButton("🗑", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.danger, padding=ft.Padding(4, 2, 4, 2)), on_click=_delete),
-            ],
-            spacing=3,
-            scroll=ft.ScrollMode.AUTO,
-        )
-
-        self.docked_toolbar.content = ft.Container(
-            content=ft.Column([info_row, actions_row], spacing=2, tight=True),
-            bgcolor=pal.panel,
-            padding=ft.Padding(6, 3, 6, 3),
-            border_radius=7,
-            border=ft.Border.all(1, pal.border),
-        )
-
-    def _update_floating_multi_bar(self, selected_syls: list[KaraokeSyllable], all_syllables: list[KaraokeSyllable]):
-        pal = get_current_palette()
-        ds = get_display_settings()
-        total_dur_ms = sum(s.duration_cs * 10 for s in selected_syls)
-        first_line = selected_syls[0].event_line_index
-        same_line = [item for item in all_syllables if item.event_line_index == first_line]
-        ordered_ids = [item.id for item in same_line if item.id in self.selected_syllable_ids]
-
-        def _merge(e):
-            if not self.document or len(ordered_ids) < 2:
-                self._show_snack("Для слияния нужно минимум 2 слога в одной строке", is_error=True)
-                return
-            try:
-                self._push_undo()
-                res = merge_syllables(self.document, ordered_ids)
-                if self.on_document_changed:
-                    self.on_document_changed(self.document)
-                self.selected_syllable_ids = list(res.selected_ids)
-                self._refresh_ui()
-                self._show_snack(f"Объединено {len(ordered_ids)} слогов")
-            except Exception as ex:
-                self._show_snack(f"Ошибка слияния: {ex}", is_error=True)
-
-        def _burst(e):
-            if not self.document:
-                return
-            self._push_undo()
-            all_burst = all(s.burst_marked for s in selected_syls)
-            if all_burst:
-                uncolour_burst(self.document, ordered_ids)
-            else:
-                colour_burst(self.document, ordered_ids)
-            if self.on_document_changed:
-                self.on_document_changed(self.document)
-            self._refresh_ui()
-
-        def _delete(e):
-            if not self.document:
-                return
-            try:
-                self._push_undo()
-                for sid in reversed(ordered_ids):
-                    delete_syllable(self.document, sid)
-                if self.on_document_changed:
-                    self.on_document_changed(self.document)
-                self.selected_syllable_ids = []
-                self._refresh_ui()
-                self._show_snack(f"Удалено {len(ordered_ids)} слогов")
-            except Exception as ex:
-                self._show_snack(f"Ошибка удаления: {ex}", is_error=True)
-
-        min_st = min(s.start for s in selected_syls)
-        max_en = max(s.end for s in selected_syls)
-
-        row = ft.Row(
-            [
-                ft.Text(f"Выбрано: {len(selected_syls)} ({total_dur_ms}мс)", size=ds.font_size(11), weight=ft.FontWeight.BOLD, color=pal.accent),
-                ft.Row(
-                    [
-                        ft.IconButton(
-                            icon=ft.Icons.PLAY_CIRCLE_FILL,
-                            tooltip="Проиграть диапазон",
-                            icon_size=18,
-                            icon_color=pal.accent,
-                            on_click=lambda e: self.audio_timeline.play_range(min_st, max_en),
-                        ),
-                        ft.FilledButton(f"🔗 Слить ({len(ordered_ids)})", style=ft.ButtonStyle(bgcolor=pal.accent, color=pal.accent_fg, padding=ft.Padding(6, 2, 6, 2)), on_click=_merge),
-                        ft.FilledButton("🔥 Бёрст", style=ft.ButtonStyle(bgcolor=pal.danger, color=pal.accent_fg, padding=ft.Padding(6, 2, 6, 2)), on_click=_burst),
-                        ft.FilledButton("🗑", style=ft.ButtonStyle(bgcolor=pal.panel, color=pal.danger, padding=ft.Padding(4, 2, 4, 2)), on_click=_delete),
-                        ft.IconButton(icon=ft.Icons.CLOSE, tooltip="Снять выбор", icon_size=16, icon_color=pal.muted, on_click=lambda e: self._deselect()),
-                    ],
-                    spacing=2,
-                    tight=True,
-                ),
-            ],
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        )
-
-        self.floating_multi_bar.content = row
-
-    # ------------------ Dialogs (Parity & Test Support) ------------------
+    # ------------------ Dialogs (Full text & compatibility) ------------------
 
     def _open_dialog(self, dialog: ft.AlertDialog):
         p = self._get_page()
@@ -878,97 +1009,16 @@ class EditorView(ft.Container):
             pass
 
     def _open_text_dialog(self, s: KaraokeSyllable):
-        pal = get_current_palette()
-        ds = get_display_settings()
-        text_input = ft.TextField(
-            label="Текст слога",
-            value=s.visible_text.strip() or s.raw_text.strip(),
-            autofocus=True,
-            text_size=ds.font_size(13),
-        )
-        rom_input = ft.TextField(
-            label="Ромадзи (чтение)",
-            value=s.romanization or "",
-            text_size=ds.font_size(13),
-        )
-        tag_dropdown = ft.Dropdown(
-            label="Тип тега",
-            options=[
-                ft.dropdown.Option("k", "\\k (резкий)"),
-                ft.dropdown.Option("kf", "\\kf (плавный)"),
-                ft.dropdown.Option("ko", "\\ko (outline)"),
-                ft.dropdown.Option("K", "\\K (плавный alias)"),
-            ],
-            value=s.tag_type.value,
-            text_size=ds.font_size(13),
-        )
-
-        def _save(e):
-            try:
-                self._push_undo()
-                if text_input.value != s.visible_text:
-                    set_syllable_text(self.document, s.id, text_input.value)
-                if rom_input.value != s.romanization:
-                    set_syllable_romanization(self.document, s.id, rom_input.value)
-                if tag_dropdown.value != s.tag_type.value:
-                    set_tag_type(self.document, [s.id], tag_dropdown.value)
-                if self.on_document_changed:
-                    self.on_document_changed(self.document)
-                self._close_dialog(dialog)
-                self._refresh_ui()
-                self._show_snack("Слог обновлён")
-            except Exception as ex:
-                self._show_snack(f"Ошибка сохранения: {ex}", is_error=True)
-
-        dialog = ft.AlertDialog(
-            title=ft.Text(f"Редактирование {s.id}", color=pal.fg, size=ds.font_size(14), weight=ft.FontWeight.BOLD),
-            content=ft.Column([text_input, rom_input, tag_dropdown], tight=True, spacing=6),
-            actions=[
-                ft.TextButton("Отмена", on_click=lambda e: self._close_dialog(dialog)),
-                ft.FilledButton("Сохранить", on_click=_save),
-            ],
-        )
-        self._open_dialog(dialog)
+        self.selected_syllable_ids = [s.id]
+        self._refresh_ui()
 
     def _open_timing_dialog(self, s: KaraokeSyllable):
-        pal = get_current_palette()
-        ds = get_display_settings()
-        dur_ms = s.duration_cs * 10
-        dur_input = ft.TextField(
-            label="Длительность (мс)",
-            value=str(dur_ms),
-            keyboard_type=ft.KeyboardType.NUMBER,
-            text_size=ds.font_size(13),
-        )
-
-        def _save(e):
-            try:
-                val = int(dur_input.value or "0")
-                if val <= 0:
-                    return
-                cs_val = max(1, int(round(val / 10.0)))
-                self._push_undo()
-                set_syllable_duration(self.document, s.id, cs_val)
-                if self.on_document_changed:
-                    self.on_document_changed(self.document)
-                self._close_dialog(dialog)
-                self._refresh_ui()
-            except Exception as ex:
-                self._show_snack(f"Ошибка: {ex}", is_error=True)
-
-        dialog = ft.AlertDialog(
-            title=ft.Text(f"Тайминг {s.id}", color=pal.fg, size=ds.font_size(14), weight=ft.FontWeight.BOLD),
-            content=ft.Column([dur_input], tight=True, spacing=6),
-            actions=[
-                ft.TextButton("Отмена", on_click=lambda e: self._close_dialog(dialog)),
-                ft.FilledButton("Применить", on_click=_save),
-            ],
-        )
-        self._open_dialog(dialog)
+        self.selected_syllable_ids = [s.id]
+        self._refresh_ui()
 
     def _open_full_text_dialog(self):
         if not self.document:
-            self._show_snack("Загрузите субтитры для просмотра текста")
+            self._show_snack("Загрузите субтитры")
             return
         pal = get_current_palette()
         ds = get_display_settings()
@@ -1003,7 +1053,7 @@ class EditorView(ft.Container):
             )
 
         dialog = ft.AlertDialog(
-            title=ft.Text("Текст песни", color=pal.fg, size=ds.font_size(14), weight=ft.FontWeight.BOLD),
+            title=ft.Text("Весь текст песни", color=pal.fg, size=ds.font_size(14), weight=ft.FontWeight.BOLD),
             content=ft.Container(
                 content=ft.ListView(lines, spacing=3, expand=True),
                 width=450,
@@ -1037,17 +1087,27 @@ class EditorView(ft.Container):
 
         if ass_text:
             self.load_ass_text(ass_text)
-            self._show_snack(f"Загружен файл: {picked.name}")
+            self._show_snack(f"Загружен: {picked.name}")
 
     def apply_theme(self, pal: ThemePalette):
-        self.app_title_text.color = pal.fg
-        self.stats_text.color = pal.muted
+        self.lbl_logo.color = pal.accent
+        self.lbl_ass_file.color = pal.muted
+        self.badge_syl_count.bgcolor = pal.raised
+        self.badge_syl_count.content.color = pal.fg
+        self.badge_syl_count.border = ft.Border.all(1, pal.border)
         self.btn_open_ass.style.bgcolor = pal.raised
         self.btn_open_ass.style.color = pal.fg
-        self.btn_lyrics.icon_color = pal.fg
-        self.btn_multi_select.icon_color = pal.accent if self.multi_select_mode else pal.muted
-        self.btn_undo.icon_color = pal.accent if not self.btn_undo.disabled else pal.muted
+        self.btn_new_ass.style.bgcolor = pal.raised
+        self.btn_new_ass.style.color = pal.fg
+        self.btn_transfer_sps.style.bgcolor = pal.accent
+        self.btn_transfer_sps.style.color = pal.accent_fg
+
+        self.transport_card.bgcolor = pal.panel
+        self.transport_card.border = ft.Border.all(1, pal.border)
+        self.pc_card1.bgcolor = pal.panel
+        self.pc_card1.border = ft.Border.all(1, pal.border)
+        self.pc_card2.bgcolor = pal.panel
+        self.pc_card2.border = ft.Border.all(1, pal.border)
 
         self.audio_timeline.apply_theme(pal)
-        self.jog_wheel.apply_theme(pal)
         self._refresh_ui()

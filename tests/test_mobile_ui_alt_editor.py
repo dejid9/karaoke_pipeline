@@ -1,8 +1,7 @@
-"""Comprehensive unit tests for ui_alt (modern Touch-First mobile karaoke editor)."""
+"""Comprehensive unit tests for ui_alt (Authentic PC-Workbench Karaoke Editor for Mobile)."""
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 import sys
 import unittest
@@ -12,7 +11,6 @@ if str(mobile_src) not in sys.path:
     sys.path.insert(0, str(mobile_src))
 
 from core.ass import AssDocument
-from ui_alt.components.jog_wheel import JogWheelWidget
 from ui_alt.views.editor_view import EditorView as AltEditorView
 
 
@@ -24,102 +22,121 @@ class TestMobileUIAltEditor(unittest.TestCase):
             "Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,{\\k50}Hel{\\k50}lo{\\k100} World\n"
         )
 
-    def test_alt_editor_initialization_and_sync(self):
+    def test_pc_editor_initialization_and_sync(self):
         doc = AssDocument.from_text(self.ass_text)
         editor = AltEditorView()
         editor.document = doc
         editor._refresh_ui()
 
-        # Audio timeline syllables synced
+        # PC Subheader status and badges
         self.assertEqual(len(editor.audio_timeline.syllables), 3)
-        self.assertEqual(editor.stats_text.value, "3 сл (🔥0)")
+        self.assertEqual(editor.badge_syl_count.content.value, "3 слогов")
+        self.assertEqual(editor.lbl_logo.value, "KARAOKE // SPS")
 
-    def test_jog_wheel_target_modes_and_readout(self):
-        jog = JogWheelWidget()
-        self.assertEqual(jog.target_mode, "start")
-
-        jog._set_target_mode("end")
-        self.assertEqual(jog.target_mode, "end")
-
-        jog._set_target_mode("shift")
-        self.assertEqual(jog.target_mode, "shift")
-
-        jog.set_value_text("Start: 1.250с")
-        self.assertEqual(jog.value_label.value, "Start: 1.250с")
-
-    def test_snap_to_cursor_start_and_end(self):
+    def test_pc_transport_bar_controls(self):
         doc = AssDocument.from_text(self.ass_text)
         editor = AltEditorView()
         editor.document = doc
-        editor.selected_syllable_ids = ["L2:S1"]
         editor._refresh_ui()
 
-        # s1: 1.50 .. 2.00
-        # Set cursor to 1.650s and snap Start
-        editor.audio_timeline.center_time = 1.650
-        editor._on_jog_snap("start")
-        syl = editor._find_syllable("L2:S1")
-        self.assertAlmostEqual(syl.start, 1.650, places=3)
+        # Speed setting
+        editor._set_speed(1.25)
+        self.assertEqual(editor.audio_timeline.playback_speed, 1.25)
+        self.assertEqual(editor.lbl_speed_text.value, "1.25×")
 
-        # Set cursor to 2.200s and snap End
-        editor.audio_timeline.center_time = 2.200
-        editor._on_jog_snap("end")
-        syl2 = editor._find_syllable("L2:S1")
-        self.assertAlmostEqual(syl2.end, 2.200, places=3)
+        # Range marker limits
+        editor.audio_timeline.center_time = 1.20
+        editor.audio_timeline.set_range_in()
+        self.assertEqual(editor.audio_timeline.range_start, 1.20)
 
-    def test_split_at_cursor(self):
+        editor.audio_timeline.center_time = 2.80
+        editor.audio_timeline.set_range_out()
+        self.assertEqual(editor.audio_timeline.range_end, 2.80)
+
+        editor.audio_timeline.clear_range()
+        self.assertIsNone(editor.audio_timeline.range_start)
+        self.assertIsNone(editor.audio_timeline.range_end)
+
+    def test_pc_card1_text_navigation_and_split_at_cursor(self):
         doc = AssDocument.from_text(self.ass_text)
         editor = AltEditorView()
         editor.document = doc
         editor.selected_syllable_ids = ["L2:S0"]
         editor._refresh_ui()
 
-        # s0 is 1.00 .. 1.50s. Place cursor at 1.25s
-        editor.audio_timeline.center_time = 1.250
-        editor._on_jog_split()
+        # Initial syllable is L2:S0 (Hel, 500ms)
+        self.assertIn("L2:S0", editor.card1_title.value)
+        self.assertEqual(editor.txt_syllable_editor.value, "Hel")
 
-        # Now document has 4 syllables
+        # Navigation to next syllable
+        editor._navigate_syllable(1)
+        self.assertEqual(editor.selected_syllable_id, "L2:S1")
+        self.assertEqual(editor.txt_syllable_editor.value, "lo")
+
+        # Navigation back
+        editor._navigate_syllable(-1)
+        self.assertEqual(editor.selected_syllable_id, "L2:S0")
+
+        # Split at cursor: s0 is 1.00 .. 1.50s. Place cursor at 1.25s
+        editor.audio_timeline.center_time = 1.250
+        editor._split_at_cursor()
+
         all_syls = list(editor.document.karaoke_syllables())
         self.assertEqual(len(all_syls), 4)
 
-    def test_jog_nudge_start_end_shift(self):
+    def test_pc_card1_toggle_unspoken(self):
         doc = AssDocument.from_text(self.ass_text)
         editor = AltEditorView()
         editor.document = doc
-        editor.selected_syllable_ids = ["L2:S1"]
+        editor.selected_syllable_ids = ["L2:S0"]
         editor._refresh_ui()
 
-        # Initial: s1 start is 1.50s
-        editor._on_jog_nudge("start", 0.05)
-        syl = editor._find_syllable("L2:S1")
-        self.assertAlmostEqual(syl.start, 1.55, places=2)
+        # Mark as unspoken: "Hel" -> "[Hel]"
+        editor._toggle_unspoken()
+        syl = editor._get_selected_syl()
+        self.assertEqual(syl.visible_text, "[Hel]")
 
-        # Nudge end: initial was 2.00s -> +0.10s = 2.10s
-        editor._on_jog_nudge("end", 0.10)
-        syl2 = editor._find_syllable("L2:S1")
-        self.assertAlmostEqual(syl2.end, 2.10, places=2)
+        # Toggle back: "[Hel]" -> "Hel"
+        editor._toggle_unspoken()
+        syl2 = editor._get_selected_syl()
+        self.assertEqual(syl2.visible_text, "Hel")
 
-    def test_multi_selection_and_merge(self):
+    def test_pc_card2_timing_and_merge(self):
         doc = AssDocument.from_text(self.ass_text)
         editor = AltEditorView()
         editor.document = doc
         editor.selected_syllable_ids = ["L2:S0", "L2:S1"]
         editor._refresh_ui()
 
-        # Floating bar is visible, single toolbar is hidden
-        self.assertTrue(editor.floating_multi_bar.visible)
-        self.assertFalse(editor.docked_toolbar.visible)
-
-        # Trigger merge on ordered_ids
-        ordered_ids = ["L2:S0", "L2:S1"]
-        res = editor._push_undo()
-        from core.editor import merge_syllables
-        merge_res = merge_syllables(editor.document, ordered_ids)
-        self.assertTrue(merge_res.selected_ids)
-
+        # Merge selected syllables
+        editor._merge_current()
         syls = list(editor.document.karaoke_syllables())
         self.assertEqual(len(syls), 2)
         self.assertEqual(syls[0].visible_text, "Hello")
+        self.assertEqual(syls[0].duration_cs, 100)
+
+    def test_pc_card2_burst_and_tags(self):
+        doc = AssDocument.from_text(self.ass_text)
+        editor = AltEditorView()
+        editor.document = doc
+        editor.selected_syllable_ids = ["L2:S0"]
+        editor._refresh_ui()
+
+        # Tag switch to \ko
+        editor.dd_tag_type.value = "ko"
+        editor._apply_tag_type()
+        syl = editor._get_selected_syl()
+        self.assertEqual(syl.tag_type.value, "ko")
+
+        # Apply Burst
+        editor._color_burst(True)
+        syl = editor._get_selected_syl()
+        self.assertTrue(syl.burst_marked)
+
+        # Remove Burst
+        editor._color_burst(False)
+        syl = editor._get_selected_syl()
+        self.assertFalse(syl.burst_marked)
 
     def test_layout_rebuild_portrait_vs_landscape(self):
         import flet as ft
@@ -128,15 +145,15 @@ class TestMobileUIAltEditor(unittest.TestCase):
         editor.document = doc
         editor._refresh_ui()
 
-        # Portrait layout produces Column
+        # Portrait layout produces Column with tab bar and active card
         editor._rebuild_layout(is_landscape=False)
         self.assertIsInstance(editor.body_container.content, ft.Column)
 
-        # Landscape layout produces 2-column Row (Split view)
+        # Landscape layout produces 2-column Row (Widescreen PC Workbench)
         editor._rebuild_layout(is_landscape=True)
         self.assertIsInstance(editor.body_container.content, ft.Row)
 
-    def test_undo_stack(self):
+    def test_undo_redo_stack(self):
         doc = AssDocument.from_text(self.ass_text)
         editor = AltEditorView()
         editor.document = doc
@@ -145,15 +162,18 @@ class TestMobileUIAltEditor(unittest.TestCase):
 
         initial_text = doc.dumps()
 
-        # Change something (snap start to 1.10s)
-        editor.audio_timeline.center_time = 1.10
-        editor._on_jog_snap("start")
-        self.assertFalse(editor.btn_undo.disabled)
+        # Change text
+        editor.txt_syllable_editor.value = "Modified"
+        editor._on_syllable_text_changed(None)
+        self.assertEqual(editor._get_selected_syl().visible_text, "Modified")
 
-        # Undo the change
+        # Undo
         editor._undo()
         self.assertEqual(editor.document.dumps(), initial_text)
-        self.assertTrue(editor.btn_undo.disabled)
+
+        # Redo
+        editor._redo()
+        self.assertEqual(editor._get_selected_syl().visible_text, "Modified")
 
 
 if __name__ == "__main__":
