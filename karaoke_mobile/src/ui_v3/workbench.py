@@ -47,8 +47,12 @@ class Workbench(ft.Container):
     def load_ass_text(self, text): self.document=AssDocument.from_text(text); self.selected_id=None; self.undo_stack.clear(); self.redo_stack.clear(); self.refresh()
 
     def _show_notice(self, text):
-        if self.page:
-            self.page.snack_bar=ft.SnackBar(ft.Text(text)); self.page.snack_bar.open=True; self.page.update()
+        try:
+            if self.page:
+                self.page.show_dialog(ft.SnackBar(ft.Text(text)))
+        except Exception:
+            pass
+
     def _mutate(self, fn):
         if not self.document: return
         self.undo_stack.append(self.document.dumps()); self.redo_stack.clear()
