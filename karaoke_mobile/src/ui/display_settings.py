@@ -25,6 +25,7 @@ class DisplaySettings:
     hide_top_bar: bool = False  # Completely hide top bar
     hide_bottom_bar: bool = False  # Completely hide bottom bar
     timeline_collapsed: bool = False  # Collapse audio timeline into a slim 24px bar
+    use_alt_ui: bool = False  # Alternative UI mode (Claude Opus ui_alt)
 
     def font_size(self, base_size: float) -> float:
         return max(8.0, round(base_size * self.ui_scale, 1))
@@ -176,6 +177,12 @@ def open_display_settings_dialog(page: ft.Page, on_changed: Callable[[], None]):
         value=ds.timeline_collapsed,
     )
 
+    use_alt_ui_switch = ft.Switch(
+        label="Альтернативный UI (Claude Opus ui_alt)",
+        value=ds.use_alt_ui or os.getenv("KARAOKE_UI_ALT", "0").lower() in ("1", "true", "yes"),
+        tooltip="Переключить на экспериментальный интерфейс из папки ui_alt (требуется перезапуск экрана)",
+    )
+
     def on_save_click(e):
         try:
             ds.ui_scale = float(scale_dropdown.value)
@@ -188,13 +195,16 @@ def open_display_settings_dialog(page: ft.Page, on_changed: Callable[[], None]):
         ds.hide_top_bar = bool(hide_top_bar_switch.value)
         ds.hide_bottom_bar = bool(hide_bottom_bar_switch.value)
         ds.timeline_collapsed = bool(timeline_collapsed_switch.value)
+        ds.use_alt_ui = bool(use_alt_ui_switch.value)
+        os.environ["KARAOKE_UI_ALT"] = "1" if ds.use_alt_ui else "0"
 
         ds.save()
         bs.open = False
         page.update()
         on_changed()
 
-        page.snack_bar = ft.SnackBar(ft.Text("Настройки экрана и DPI сохранены!"))
+        msg = "Настройки сохранены!" + (" (Режим ui_alt включен)" if ds.use_alt_ui else "")
+        page.snack_bar = ft.SnackBar(ft.Text(msg))
         page.snack_bar.open = True
         page.update()
 
@@ -206,6 +216,8 @@ def open_display_settings_dialog(page: ft.Page, on_changed: Callable[[], None]):
         ds.hide_top_bar = False
         ds.hide_bottom_bar = False
         ds.timeline_collapsed = False
+        ds.use_alt_ui = False
+        os.environ["KARAOKE_UI_ALT"] = "0"
         ds.save()
         bs.open = False
         page.update()
@@ -235,6 +247,7 @@ def open_display_settings_dialog(page: ft.Page, on_changed: Callable[[], None]):
                     hide_top_bar_switch,
                     hide_bottom_bar_switch,
                     timeline_collapsed_switch,
+                    use_alt_ui_switch,
                     ft.Divider(height=1, color=pal.border),
                     ft.Row(
                         [

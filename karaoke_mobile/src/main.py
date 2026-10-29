@@ -21,11 +21,7 @@ from ui.theme import (
     get_current_palette,
     theme_names,
 )
-from ui.views.burst_view import BurstView
-from ui.views.editor_view import EditorView
-from ui.views.export_view import ExportView
-from ui.views.mfa_view import MFAView
-from ui.views.sps_view import SPSView
+from ui.view_resolver import get_active_views
 
 
 def main(page: ft.Page):
@@ -205,21 +201,22 @@ def main(page: ft.Page):
             "audio_bytes": current_audio_bytes,
         }
 
-    # Initialize Views
-    mfa_view = MFAView(on_alignment_success=on_alignment_success)
-    editor_view = EditorView(
+    # Initialize Views (Standard or Alt based on KARAOKE_UI_ALT / settings)
+    MFAViewCls, EditorViewCls, SPSViewCls, BurstViewCls, ExportViewCls, is_alt_ui = get_active_views()
+    mfa_view = MFAViewCls(on_alignment_success=on_alignment_success)
+    editor_view = EditorViewCls(
         on_document_changed=on_document_changed,
         on_jump_to_sps=jump_to_sps,
         on_audio_loaded=sync_audio,
     )
-    sps_view = SPSView(
+    sps_view = SPSViewCls(
         on_document_changed=on_document_changed,
         on_measurements_changed=on_measurements_changed,
         on_return_to_karaoke=on_return_to_editor,
         on_audio_loaded=sync_audio,
     )
-    burst_view = BurstView(on_settings_changed=on_burst_settings_changed)
-    export_view = ExportView(
+    burst_view = BurstViewCls(on_settings_changed=on_burst_settings_changed)
+    export_view = ExportViewCls(
         get_document=lambda: current_document,
         get_timeline=lambda: current_timeline,
         get_project_state=get_project_state,
@@ -316,7 +313,7 @@ def main(page: ft.Page):
     )
 
     app_icon = ft.Icon(ft.Icons.MIC, color=pal.accent, size=20)
-    app_title = ft.Text("Karaoke Mobile", size=16, weight=ft.FontWeight.BOLD, color=pal.fg)
+    app_title = ft.Text("Karaoke Mobile [Alt UI]" if is_alt_ui else "Karaoke Mobile", size=16, weight=ft.FontWeight.BOLD, color=pal.fg)
 
     top_bar = ft.Container(
         content=ft.Row(
