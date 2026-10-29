@@ -7,7 +7,7 @@ from typing import Tuple, Type
 
 # Default standard views
 from ui.views.burst_view import BurstView as DefaultBurstView
-from ui.views.editor_view import EditorView as DefaultEditorView
+from ui_v2.editor_view import EditorView as DefaultEditorView
 from ui.views.export_view import ExportView as DefaultExportView
 from ui.views.mfa_view import MFAView as DefaultMFAView
 from ui.views.sps_view import SPSView as DefaultSPSView

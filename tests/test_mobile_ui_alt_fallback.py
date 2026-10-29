@@ -14,8 +14,7 @@ if str(mobile_src) not in sys.path:
     sys.path.insert(0, str(mobile_src))
 
 from ui.display_settings import DisplaySettings
-from ui.view_resolver import get_active_views, is_alt_ui_enabled
-from ui.views.editor_view import EditorView as DefaultEditorView
+from ui.view_resolver import DefaultEditorView, get_active_views, is_alt_ui_enabled
 
 
 class TestUIAltFallback(unittest.TestCase):
