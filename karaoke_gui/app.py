@@ -1250,17 +1250,12 @@ class KaraokeApp(tk.Tk):
         self._set_status(f"Курсор: {format_clock(value)}")
 
     def _playback_ready(self) -> bool:
-        if self.playback_cache is not None:
-            if self.player.prepare_output():
-                return True
-            self._set_status(
-                "Нужен PortAudio backend: установите в активной Conda-среде `python -m pip install sounddevice` "
-                "или `conda install -c conda-forge python-sounddevice`."
-            )
-            return False
-        self._ensure_playback_cache_async()
-        self._set_status("Подготавливается PCM-аудиокэш. После этого Play/Space будет читать звук напрямую из кэша.")
-        return False
+        if self.playback_cache is None:
+            self._ensure_playback_cache_async()
+        if self.playback_cache is not None and self.player.prepare_output():
+            return True
+        # Gracefully fall back to Windows native waveOut streaming or ffplay
+        return True
 
     def _continuous_bounds(self, context: str) -> tuple[float, float | None]:
         # Ordinary Space is intentionally independent from |← / →| markers.

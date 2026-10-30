@@ -95,3 +95,13 @@ def test_ui_preferences_support_pitch_toggle(tmp_path: Path):
     path = tmp_path / "prefs.json"
     save_ui_preferences("Тёмно-синяя · ночная", False, path=path, playback_preserve_pitch=False)
     assert load_ui_preferences(path)["playback_preserve_pitch"] is False
+
+
+def test_media_player_falls_back_when_portaudio_unavailable():
+    player = media.MediaPlayer()
+    if media._is_windows_audio_platform():
+        ready = player.prepare_output()
+        assert ready is True
+        assert player._sink is not None or player._pa_engine is not None
+        assert "waveOut" in player.backend_description or "PortAudio" in player.backend_description
+    player.close()

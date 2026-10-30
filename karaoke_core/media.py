@@ -1520,6 +1520,8 @@ class MediaPlayer:
     def backend_description(self) -> str:
         if self._pa_engine is not None:
             return self._pa_engine.backend_description
+        if self._sink is not None:
+            return "Windows waveOut (WinMM)"
         if self._portaudio_error:
             return f"Fallback ({self._portaudio_error})"
         return "Fallback"
@@ -1565,7 +1567,19 @@ class MediaPlayer:
             except Exception as exc:
                 self._portaudio_error = str(exc)
                 self._pa_engine = None
-                return False
+
+            # Fallback to Windows native waveOut sink if PortAudio / sounddevice is unavailable
+            if _is_windows_audio_platform() and not self._sink_failed:
+                if self._sink is not None:
+                    return True
+                try:
+                    self._sink = _WindowsWaveOutSink()
+                    return True
+                except Exception:
+                    self._sink_failed = True
+                    self._sink = None
+
+            return False
 
     @property
     def follow_default_device(self) -> bool:

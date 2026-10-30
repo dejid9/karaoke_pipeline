@@ -189,6 +189,8 @@ class DualTimeline(ttk.Frame):
         self.on_add_track: Optional[Callable[[str, int], None]] = None
         self.on_move_track: Optional[Callable[[int, int], None]] = None
         self.on_delete_track: Optional[Callable[[int], None]] = None
+        self.on_syllable_resize: Optional[Callable[[str, float, float], None]] = None
+        self.on_syllable_move: Optional[Callable[[str, float], None]] = None
         self.palette = get_theme(DEFAULT_THEME)
 
         self.overview = tk.Canvas(self, height=46, highlightthickness=0, background=self.palette.canvas_alt)

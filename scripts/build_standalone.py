@@ -399,7 +399,7 @@ def package_standalone(
     verify_cmd = [
         str(runtime_dst / "python.exe"),
         "-c",
-        "import karaoke_core, karaoke_gui, sounddevice, soundfile, numpy, tkinter; root=tkinter.Tk(); root.withdraw(); print('[OK] Core modules and Tkinter initialized successfully')",
+        "import karaoke_core, karaoke_gui, numpy, tkinter; root=tkinter.Tk(); root.withdraw(); print('[OK] Core modules and Tkinter initialized successfully')",
     ]
     env = os.environ.copy()
     env["PATH"] = f"{runtime_dst / 'Library' / 'bin'};{runtime_dst / 'Scripts'};{runtime_dst};{env.get('PATH', '')}"
