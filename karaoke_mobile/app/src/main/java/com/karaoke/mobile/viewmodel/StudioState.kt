@@ -86,7 +86,21 @@ data class StudioUiState(
     val playbackOrigin: Double = 0.0,
     val defaultTagType: KaraokeTagType = KaraokeTagType.K,
     val canUndo: Boolean = false,
-    val canRedo: Boolean = false
+    val canRedo: Boolean = false,
+    val rawLyricsText: String = "",
+    val preparationLanguage: String = "ru",
+    val colabNotebookUrl: String = "https://colab.research.google.com/github/MontrealCorpusTools/Montreal-Forced-Aligner/blob/main/docs/source/tutorials/aligning_custom_audio.ipynb",
+    val renderResolution: String = "1080p",
+    val renderFps: Int = 30,
+    val renderBackgroundType: String = "color",
+    val renderBackgroundColor: Long = 0xFF0B101BL,
+    val renderBackgroundImageUri: Uri? = null,
+    val renderBackgroundVideoUri: Uri? = null,
+    val renderAlignment: Int = 2,
+    val renderFontSize: Int = 54,
+    val renderFontName: String = "Arial",
+    val renderSmoothScroll: Boolean = true,
+    val renderLeadInSeconds: Double = 0.5
 )
 
 /**
@@ -1330,6 +1344,285 @@ class StudioState : ViewModel() {
 
     fun clearMessage() {
         _uiState.value = _uiState.value.copy(errorMessage = null, successMessage = null)
+    }
+
+    // --- Подготовка (Preparation) ---
+
+    fun setRawLyricsText(text: String) {
+        _uiState.value = _uiState.value.copy(rawLyricsText = text)
+    }
+
+    fun setPreparationLanguage(lang: String) {
+        _uiState.value = _uiState.value.copy(preparationLanguage = lang)
+    }
+
+    fun breakLyricsIntoSyllables() {
+        val lyrics = _uiState.value.rawLyricsText
+        if (lyrics.isBlank()) {
+            viewModelScope.launch {
+                _events.emit(StudioEvent.ShowError("Введите текст песни для разбивки"))
+            }
+            return
+        }
+        val doc = TextGridConverter.generateDraftAssFromLyrics(
+            lyricsText = lyrics,
+            lang = _uiState.value.preparationLanguage
+        )
+        val syllables = doc.events.flatMap { it.syllables }
+        editor = AssEditor(doc)
+        _uiState.value = _uiState.value.copy(
+            document = doc,
+            syllables = syllables,
+            selectedTab = AppTab.KARAOKE
+        )
+        addLog(LogLevel.INFO, "Сгенерирован черновик караоке (${syllables.size} слогов из текста)", "Prep")
+        viewModelScope.launch {
+            _events.emit(StudioEvent.ShowSuccess("Текст разбит на слоги (${syllables.size} слогов)"))
+        }
+    }
+
+    fun importTextGrid(uri: Uri, context: Context) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val content = context.contentResolver.openInputStream(uri)?.use { stream ->
+                    BufferedReader(InputStreamReader(stream, Charsets.UTF_8)).readText()
+                } ?: throw IllegalStateException("Не удалось прочитать TextGrid")
+
+                val grid = TextGridConverter.parseTextGrid(content)
+                val doc = TextGridConverter.convertToAss(
+                    grid = grid,
+                    settings = TextGridConversionSettings(),
+                    language = _uiState.value.preparationLanguage
+                )
+                val syllables = doc.events.flatMap { it.syllables }
+                withContext(Dispatchers.Main) {
+                    editor = AssEditor(doc)
+                    _uiState.value = _uiState.value.copy(
+                        document = doc,
+                        syllables = syllables,
+                        selectedTab = AppTab.KARAOKE
+                    )
+                    addLog(LogLevel.INFO, "TextGrid успешно импортирован (${syllables.size} слогов)", "MFA")
+                    _events.emit(StudioEvent.ShowSuccess("TextGrid импортирован: ${syllables.size} слогов"))
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    addLog(LogLevel.ERROR, "Ошибка импорта TextGrid: ${e.message}", "MFA")
+                    _events.emit(StudioEvent.ShowError("Ошибка TextGrid: ${e.message}"))
+                }
+            }
+        }
+    }
+
+    fun bundleForColab(context: Context) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val cacheDir = context.cacheDir
+                val bundleZip = File(cacheDir, "mfa_colab_bundle.zip")
+                if (bundleZip.exists()) bundleZip.delete()
+
+                ZipOutputStream(BufferedOutputStream(bundleZip.outputStream())).use { zos ->
+                    val lyricsText = _uiState.value.rawLyricsText.ifBlank {
+                        _uiState.value.syllables.joinToString("") { it.text }
+                    }
+                    zos.putNextEntry(ZipEntry("lyrics.txt"))
+                    zos.write(lyricsText.toByteArray(Charsets.UTF_8))
+                    zos.closeEntry()
+
+                    val projectMedia = _uiState.value.project?.mediaPath
+                    if (projectMedia != null) {
+                        val mediaFile = File(projectMedia)
+                        if (mediaFile.exists()) {
+                            zos.putNextEntry(ZipEntry("audio.${mediaFile.extension}"))
+                            mediaFile.inputStream().use { it.copyTo(zos) }
+                            zos.closeEntry()
+                        }
+                    }
+                }
+
+                val fileUri = androidx.core.content.FileProvider.getUriForFile(
+                    context,
+                    "${context.packageName}.fileprovider",
+                    bundleZip
+                )
+                withContext(Dispatchers.Main) {
+                    addLog(LogLevel.ACTION, "Пакет для Colab сформирован: ${bundleZip.name}", "Colab")
+                    _events.emit(StudioEvent.ShareFile(fileUri))
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    addLog(LogLevel.ERROR, "Ошибка формирования пакета: ${e.message}", "Colab")
+                    _events.emit(StudioEvent.ShowError("Ошибка создания пакета: ${e.message}"))
+                }
+            }
+        }
+    }
+
+    // --- Рендер (Render) ---
+
+    fun setRenderResolution(res: String) {
+        _uiState.value = _uiState.value.copy(renderResolution = res)
+    }
+
+    fun setRenderFps(fps: Int) {
+        _uiState.value = _uiState.value.copy(renderFps = fps)
+    }
+
+    fun setRenderBackgroundType(type: String) {
+        _uiState.value = _uiState.value.copy(renderBackgroundType = type)
+    }
+
+    fun setRenderBackgroundColor(color: Long) {
+        _uiState.value = _uiState.value.copy(renderBackgroundColor = color)
+    }
+
+    fun setRenderAlignment(alignment: Int) {
+        _uiState.value = _uiState.value.copy(renderAlignment = alignment)
+    }
+
+    fun setRenderFontSize(fontSize: Int) {
+        _uiState.value = _uiState.value.copy(renderFontSize = fontSize)
+    }
+
+    fun setRenderSmoothScroll(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(renderSmoothScroll = enabled)
+    }
+
+    fun setRenderBackgroundImageUri(uri: Uri?) {
+        _uiState.value = _uiState.value.copy(renderBackgroundImageUri = uri)
+    }
+
+    fun setRenderBackgroundVideoUri(uri: Uri?) {
+        _uiState.value = _uiState.value.copy(renderBackgroundVideoUri = uri)
+    }
+
+    fun generateRenderAssDocument(): AssDocument {
+        val state = _uiState.value
+        val (resX, resY) = when (state.renderResolution) {
+            "720p" -> Pair(1280, 720)
+            "480p" -> Pair(854, 480)
+            else -> Pair(1920, 1080)
+        }
+
+        val karaokeStyle = AssStyle(
+            name = "KaraokeRender",
+            fontName = state.renderFontName,
+            fontSize = state.renderFontSize.toDouble(),
+            primaryColor = AssColor(0, 255, 255, 255),
+            secondaryColor = AssColor(0, 255, 200, 50),
+            outlineColor = AssColor(0, 10, 15, 25),
+            backColor = AssColor(128, 0, 0, 0),
+            bold = true,
+            alignment = state.renderAlignment,
+            marginV = if (state.renderAlignment == 2) 70 else 30,
+            marginL = 60,
+            marginR = 60
+        )
+
+        val renderEvents = state.document.events.map { ev ->
+            val leadIn = if (state.renderSmoothScroll) state.renderLeadInSeconds else 0.0
+            val adjustedStart = (ev.start - leadIn).coerceAtLeast(0.0)
+            ev.copy(
+                start = adjustedStart,
+                styleName = "KaraokeRender"
+            )
+        }
+
+        return AssDocument(
+            title = "Karaoke Video Render",
+            playResX = resX,
+            playResY = resY,
+            styles = listOf(karaokeStyle),
+            events = renderEvents
+        )
+    }
+
+    fun exportRenderAss(context: Context) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val doc = generateRenderAssDocument()
+                val cacheDir = context.cacheDir
+                val renderAss = File(cacheDir, "karaoke_render.ass")
+                renderAss.writeText(doc.toAssText(), Charsets.UTF_8)
+
+                val fileUri = androidx.core.content.FileProvider.getUriForFile(
+                    context,
+                    "${context.packageName}.fileprovider",
+                    renderAss
+                )
+                withContext(Dispatchers.Main) {
+                    addLog(LogLevel.INFO, "Сгенерирован ASS для рендера (${doc.events.size} строк)", "Render")
+                    _events.emit(StudioEvent.ShareFile(fileUri))
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    addLog(LogLevel.ERROR, "Ошибка экспорта ASS для рендера: ${e.message}", "Render")
+                    _events.emit(StudioEvent.ShowError("Ошибка экспорта ASS: ${e.message}"))
+                }
+            }
+        }
+    }
+
+    fun getFfmpegRenderCommand(): String {
+        val state = _uiState.value
+        val fps = state.renderFps
+        val bgInput = when (state.renderBackgroundType) {
+            "video" -> "-i background.mp4"
+            "image" -> "-loop 1 -framerate $fps -i background.jpg"
+            else -> "-f lavfi -i color=c=0x0B101B:s=${if (state.renderResolution == "720p") "1280x720" else if (state.renderResolution == "480p") "854x480" else "1920x1080"}:r=$fps"
+        }
+        return "ffmpeg $bgInput -i audio.mp3 -vf \"ass=karaoke_render.ass\" -c:v h264_mediacodec -b:v 8M -c:a copy -shortest -y output_karaoke.mp4"
+    }
+
+    fun bundleForColabRender(context: Context) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val cacheDir = context.cacheDir
+                val bundleZip = File(cacheDir, "colab_render_bundle.zip")
+                if (bundleZip.exists()) bundleZip.delete()
+
+                val renderDoc = generateRenderAssDocument()
+
+                ZipOutputStream(BufferedOutputStream(bundleZip.outputStream())).use { zos ->
+                    // 1. ASS файл
+                    zos.putNextEntry(ZipEntry("karaoke_render.ass"))
+                    zos.write(renderDoc.toAssText().toByteArray(Charsets.UTF_8))
+                    zos.closeEntry()
+
+                    // 2. Аудиофайл (если есть)
+                    val projectMedia = _uiState.value.project?.mediaPath
+                    if (projectMedia != null) {
+                        val mediaFile = File(projectMedia)
+                        if (mediaFile.exists()) {
+                            zos.putNextEntry(ZipEntry("audio.${mediaFile.extension}"))
+                            mediaFile.inputStream().use { it.copyTo(zos) }
+                            zos.closeEntry()
+                        }
+                    }
+
+                    // 3. Скрипт рендера run_render.sh
+                    val cmd = getFfmpegRenderCommand()
+                    zos.putNextEntry(ZipEntry("run_render.sh"))
+                    zos.write(cmd.toByteArray(Charsets.UTF_8))
+                    zos.closeEntry()
+                }
+
+                val fileUri = androidx.core.content.FileProvider.getUriForFile(
+                    context,
+                    "${context.packageName}.fileprovider",
+                    bundleZip
+                )
+                withContext(Dispatchers.Main) {
+                    addLog(LogLevel.ACTION, "Пакет для Colab Render сформирован: ${bundleZip.name}", "Colab")
+                    _events.emit(StudioEvent.ShareFile(fileUri))
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    addLog(LogLevel.ERROR, "Ошибка формирования пакета Colab Render: ${e.message}", "Colab")
+                    _events.emit(StudioEvent.ShowError("Ошибка создания пакета: ${e.message}"))
+                }
+            }
+        }
     }
 
     override fun onCleared() {

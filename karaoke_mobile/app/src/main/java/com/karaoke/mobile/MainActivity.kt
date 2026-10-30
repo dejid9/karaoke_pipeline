@@ -107,6 +107,24 @@ class MainActivity : ComponentActivity() {
         uri?.let { viewModel.loadAss(it, this) }
     }
 
+    private val pickTextGridLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        uri?.let { viewModel.importTextGrid(it, this) }
+    }
+
+    private val pickBackgroundImageLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        uri?.let { viewModel.setRenderBackgroundImageUri(it) }
+    }
+
+    private val pickBackgroundVideoLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        uri?.let { viewModel.setRenderBackgroundVideoUri(it) }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -243,12 +261,22 @@ class MainActivity : ComponentActivity() {
                                     )
                                 }
                                 AppTab.PREPARATION -> {
-                                    PlaceholderTab(
-                                        title = "Подготовка",
-                                        icon = Icons.Default.Description,
-                                        description = "Модуль предварительной подготовки текста песни, разбиения на слоги, романизации и фонетического выравнивания (MFA/IPA).",
+                                    PreparationTab(
+                                        lyricsText = uiState.rawLyricsText,
+                                        language = uiState.preparationLanguage,
+                                        audioLoaded = uiState.mediaDuration > 0.0,
+                                        audioDuration = uiState.mediaDuration,
                                         palette = uiState.currentTheme,
-                                        onNavigateToKaraoke = { viewModel.selectTab(AppTab.KARAOKE) }
+                                        onLyricsChange = { viewModel.setRawLyricsText(it) },
+                                        onLanguageChange = { viewModel.setPreparationLanguage(it) },
+                                        onBreakSyllablesOffline = { viewModel.breakLyricsIntoSyllables() },
+                                        onBundleForColab = { viewModel.bundleForColab(context) },
+                                        onOpenColabUrl = {
+                                            val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(uiState.colabNotebookUrl))
+                                            startActivity(browserIntent)
+                                        },
+                                        onPickTextGrid = { pickTextGridLauncher.launch(arrayOf("*/*")) },
+                                        onPickAss = { pickAssLauncher.launch(ASS_MIME_TYPES) }
                                     )
                                 }
                                 AppTab.SPS -> {
@@ -261,12 +289,33 @@ class MainActivity : ComponentActivity() {
                                     )
                                 }
                                 AppTab.RENDER -> {
-                                    PlaceholderTab(
-                                        title = "Рендер",
-                                        icon = Icons.Default.Movie,
-                                        description = "Пакетный экспорт субтитров в готовое видео караоке с кастомным оформлением, эффектами заливки и аудиодорожкой.",
+                                    RenderTab(
+                                        resolution = uiState.renderResolution,
+                                        fps = uiState.renderFps,
+                                        backgroundType = uiState.renderBackgroundType,
+                                        backgroundColor = uiState.renderBackgroundColor,
+                                        backgroundImageSelected = uiState.renderBackgroundImageUri != null,
+                                        backgroundVideoSelected = uiState.renderBackgroundVideoUri != null,
+                                        alignment = uiState.renderAlignment,
+                                        fontSize = uiState.renderFontSize,
+                                        smoothScroll = uiState.renderSmoothScroll,
                                         palette = uiState.currentTheme,
-                                        onNavigateToKaraoke = { viewModel.selectTab(AppTab.KARAOKE) }
+                                        onResolutionChange = { viewModel.setRenderResolution(it) },
+                                        onFpsChange = { viewModel.setRenderFps(it) },
+                                        onBackgroundTypeChange = { viewModel.setRenderBackgroundType(it) },
+                                        onBackgroundColorChange = { viewModel.setRenderBackgroundColor(it) },
+                                        onPickBackgroundImage = { pickBackgroundImageLauncher.launch(arrayOf("image/*")) },
+                                        onPickBackgroundVideo = { pickBackgroundVideoLauncher.launch(arrayOf("video/*")) },
+                                        onAlignmentChange = { viewModel.setRenderAlignment(it) },
+                                        onFontSizeChange = { viewModel.setRenderFontSize(it) },
+                                        onSmoothScrollChange = { viewModel.setRenderSmoothScroll(it) },
+                                        onExportRenderAss = { viewModel.exportRenderAss(context) },
+                                        onCopyFfmpegCommand = {
+                                            val clip = android.content.ClipData.newPlainText("FFmpeg Command", viewModel.getFfmpegRenderCommand())
+                                            (context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager)?.setPrimaryClip(clip)
+                                            Toast.makeText(context, "Команда скопирована в буфер обмена", Toast.LENGTH_SHORT).show()
+                                        },
+                                        onBundleForColabRender = { viewModel.bundleForColabRender(context) }
                                     )
                                 }
                             }

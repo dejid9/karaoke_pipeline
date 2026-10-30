@@ -58,6 +58,47 @@ def _is_windows_audio_platform() -> bool:
     return sys.platform.startswith("win")
 
 
+if _is_windows_audio_platform():
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _WinGUID(ctypes.Structure):
+            _fields_ = [
+                ("Data1", wintypes.DWORD), ("Data2", wintypes.WORD), ("Data3", wintypes.WORD),
+                ("Data4", ctypes.c_ubyte * 8),
+            ]
+
+        def _make_guid(text: str) -> _WinGUID:
+            import uuid
+            value = uuid.UUID(text)
+            raw = value.bytes_le
+            return _WinGUID(
+                int.from_bytes(raw[0:4], "little"),
+                int.from_bytes(raw[4:6], "little"),
+                int.from_bytes(raw[6:8], "little"),
+                (ctypes.c_ubyte * 8).from_buffer_copy(raw[8:16]),
+            )
+
+        _CLSID_MMDeviceEnumerator = _make_guid("bcde0395-e52f-467c-8e3d-c4579291692e")
+        _IID_IMMDeviceEnumerator = _make_guid("a95664d2-9614-4f35-a746-de8db63617e6")
+        _OLE32 = ctypes.OleDLL("ole32")
+        _OLE32.CoInitializeEx.argtypes = [ctypes.c_void_p, wintypes.DWORD]
+        _OLE32.CoInitializeEx.restype = ctypes.c_long
+        _OLE32.CoUninitialize.argtypes = []
+        _OLE32.CoCreateInstance.argtypes = [ctypes.POINTER(_WinGUID), ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(_WinGUID), ctypes.POINTER(ctypes.c_void_p)]
+        _OLE32.CoCreateInstance.restype = ctypes.c_long
+        _OLE32.CoTaskMemFree.argtypes = [ctypes.c_void_p]
+
+        _ReleaseProto = ctypes.WINFUNCTYPE(wintypes.ULONG, ctypes.c_void_p)
+        _GetDefaultEndpointProto = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p))
+        _GetIdProto = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p))
+    except Exception:
+        _OLE32 = None
+else:
+    _OLE32 = None
+
+
 def _windows_default_audio_endpoint_id() -> Optional[str]:
     """Return the current Windows Core Audio default render endpoint id.
 
@@ -68,81 +109,51 @@ def _windows_default_audio_endpoint_id() -> Optional[str]:
     reopen only when it is actually necessary.  No third-party COM package is
     required.
     """
-    if not _is_windows_audio_platform():
+    if not _is_windows_audio_platform() or _OLE32 is None:
         return None
     try:
         import ctypes
-        from ctypes import wintypes
 
-        class GUID(ctypes.Structure):
-            _fields_ = [
-                ("Data1", wintypes.DWORD), ("Data2", wintypes.WORD), ("Data3", wintypes.WORD),
-                ("Data4", ctypes.c_ubyte * 8),
-            ]
-
-        def guid(text: str) -> GUID:
-            import uuid
-            value = uuid.UUID(text)
-            raw = value.bytes_le
-            return GUID(
-                int.from_bytes(raw[0:4], "little"),
-                int.from_bytes(raw[4:6], "little"),
-                int.from_bytes(raw[6:8], "little"),
-                (ctypes.c_ubyte * 8).from_buffer_copy(raw[8:16]),
-            )
-
-        ole32 = ctypes.OleDLL("ole32")
-        ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, wintypes.DWORD]
-        ole32.CoInitializeEx.restype = ctypes.c_long
-        ole32.CoUninitialize.argtypes = []
-        ole32.CoCreateInstance.argtypes = [ctypes.POINTER(GUID), ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(GUID), ctypes.POINTER(ctypes.c_void_p)]
-        ole32.CoCreateInstance.restype = ctypes.c_long
-        ole32.CoTaskMemFree.argtypes = [ctypes.c_void_p]
-
-        hr_init = int(ole32.CoInitializeEx(None, 0x2))  # COINIT_APARTMENTTHREADED
+        hr_init = int(_OLE32.CoInitializeEx(None, 0x2))  # COINIT_APARTMENTTHREADED
         should_uninit = hr_init in (0, 1)
         enumerator = ctypes.c_void_p()
         device = ctypes.c_void_p()
         endpoint_text = ctypes.c_void_p()
         try:
-            clsid = guid("bcde0395-e52f-467c-8e3d-c4579291692e")
-            iid = guid("a95664d2-9614-4f35-a746-de8db63617e6")
-            hr = int(ole32.CoCreateInstance(ctypes.byref(clsid), None, 23, ctypes.byref(iid), ctypes.byref(enumerator)))
+            hr = int(_OLE32.CoCreateInstance(ctypes.byref(_CLSID_MMDeviceEnumerator), None, 23, ctypes.byref(_IID_IMMDeviceEnumerator), ctypes.byref(enumerator)))
             if hr < 0 or not enumerator.value:
                 return None
 
-            def method(ptr: ctypes.c_void_p, index: int, restype, *argtypes):
-                vtable = ctypes.cast(ptr, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
-                prototype = ctypes.WINFUNCTYPE(restype, ctypes.c_void_p, *argtypes)
-                return prototype(vtable[index])
-
-            # IMMDeviceEnumerator::GetDefaultAudioEndpoint(eRender, eMultimedia).
-            get_default = method(enumerator, 4, ctypes.c_long, ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p))
+            vtable_enum = ctypes.cast(enumerator, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+            get_default = _GetDefaultEndpointProto(vtable_enum[4])
             hr = int(get_default(enumerator, 0, 1, ctypes.byref(device)))
-            if (hr < 0 or not device.value):
-                # Some drivers only expose a console-role default.
+            if hr < 0 or not device.value:
                 hr = int(get_default(enumerator, 0, 0, ctypes.byref(device)))
             if hr < 0 or not device.value:
                 return None
 
-            get_id = method(device, 5, ctypes.c_long, ctypes.POINTER(ctypes.c_void_p))
+            vtable_dev = ctypes.cast(device, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+            get_id = _GetIdProto(vtable_dev[5])
             hr = int(get_id(device, ctypes.byref(endpoint_text)))
             if hr < 0 or not endpoint_text.value:
                 return None
             return ctypes.wstring_at(endpoint_text.value)
         finally:
             if endpoint_text.value:
-                try: ole32.CoTaskMemFree(endpoint_text)
+                try: _OLE32.CoTaskMemFree(endpoint_text)
                 except Exception: pass
-            for ptr in (device, enumerator):
-                if ptr.value:
-                    try:
-                        release = method(ptr, 2, wintypes.ULONG)
-                        release(ptr)
-                    except Exception:
-                        pass
+            if device.value:
+                try:
+                    vtable_dev = ctypes.cast(device, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+                    _ReleaseProto(vtable_dev[2])(device)
+                except Exception: pass
+            if enumerator.value:
+                try:
+                    vtable_enum = ctypes.cast(enumerator, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+                    _ReleaseProto(vtable_enum[2])(enumerator)
+                except Exception: pass
             if should_uninit:
-                try: ole32.CoUninitialize()
+                try: _OLE32.CoUninitialize()
                 except Exception: pass
     except Exception:
         return None
