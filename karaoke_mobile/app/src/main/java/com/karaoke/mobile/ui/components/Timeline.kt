@@ -65,7 +65,7 @@ fun Timeline(
                 .background(palette.canvas)
                 .pointerInput(zoomLevel, scrollOffset) {
                     detectTapGestures { offset ->
-                        val time = (offset.x + scrollOffset) / pixelsPerSecond
+                        val time = ((offset.x + scrollOffset) / pixelsPerSecond).toDouble()
                         onSeek(time.coerceIn(0.0, duration))
                     }
                 }
@@ -85,8 +85,8 @@ fun Timeline(
                 }
         ) {
             canvasWidth = size.width
-            val visibleStart = scrollOffset / pixelsPerSecond
-            val visibleEnd = (scrollOffset + canvasWidth) / pixelsPerSecond
+            val visibleStart = (scrollOffset / pixelsPerSecond).toDouble()
+            val visibleEnd = ((scrollOffset + canvasWidth) / pixelsPerSecond).toDouble()
 
             // Рисуем waveform
             drawWaveform(
@@ -172,8 +172,8 @@ fun Timeline(
 
         // Шкала времени
         TimeRuler(
-            visibleStart = scrollOffset / pixelsPerSecond,
-            visibleEnd = (scrollOffset + canvasWidth) / pixelsPerSecond,
+            visibleStart = (scrollOffset / pixelsPerSecond).toDouble(),
+            visibleEnd = ((scrollOffset + canvasWidth) / pixelsPerSecond).toDouble(),
             pixelsPerSecond = pixelsPerSecond,
             palette = palette,
             modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth().height(timeHeight)

@@ -10,6 +10,7 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -37,7 +38,7 @@ data class KaraokeThemePalette(
     val success: Color,
     val warning: Color,
     val danger: Color,
-    val accentFg: Color = White
+    val accentFg: Color = Color.White
 )
 
 val NavyDarkPalette = KaraokeThemePalette(
@@ -116,7 +117,7 @@ val YellowDarkPalette = NavyDarkPalette.copy(
     bg = YellowBg,
     panel = YellowPanel,
     raised = YellowRaised,
-    accentFg = Black
+    accentFg = Color.Black
 )
 
 val VaporDarkPalette = NavyDarkPalette.copy(
@@ -135,7 +136,7 @@ val CappuccinoDarkPalette = NavyDarkPalette.copy(
     bg = CappuccinoBg,
     panel = CappuccinoPanel,
     raised = CappuccinoRaised,
-    accentFg = Black
+    accentFg = Color.Black
 )
 
 val allThemes = listOf(
@@ -173,17 +174,17 @@ fun KaraokeThemePalette.toColorScheme() = if (isDark) {
         inverseSurface = fg,
         inverseOnSurface = bg,
         error = danger,
-        onError = White,
+        onError = Color.White,
         errorContainer = danger.copy(alpha = 0.2f),
         onErrorContainer = danger,
         outline = border,
         outlineVariant = grid,
-        scrim = Black.copy(alpha = 0.5f)
+        scrim = Color.Black.copy(alpha = 0.5f)
     )
 } else {
     lightColorScheme(
         primary = accent,
-        onPrimary = White,
+        onPrimary = Color.White,
         primaryContainer = accentAlt,
         onPrimaryContainer = accent,
         secondary = accentAlt,
@@ -204,12 +205,12 @@ fun KaraokeThemePalette.toColorScheme() = if (isDark) {
         inverseSurface = fg,
         inverseOnSurface = bg,
         error = danger,
-        onError = White,
+        onError = Color.White,
         errorContainer = danger.copy(alpha = 0.1f),
         onErrorContainer = danger,
         outline = border,
         outlineVariant = grid,
-        scrim = Black.copy(alpha = 0.3f)
+        scrim = Color.Black.copy(alpha = 0.3f)
     )
 }
 

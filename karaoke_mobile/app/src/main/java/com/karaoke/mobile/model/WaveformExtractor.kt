@@ -10,6 +10,13 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
+data class WaveformData(
+    val samplesPerPixel: Int,
+    val minAmplitudes: FloatArray,
+    val maxAmplitudes: FloatArray,
+    val durationMs: Long
+)
+
 object WaveformExtractor {
     suspend fun extract(context: Context, uri: android.net.Uri, targetSamples: Int = 2000): WaveformData? =
         withContext(Dispatchers.IO) {
