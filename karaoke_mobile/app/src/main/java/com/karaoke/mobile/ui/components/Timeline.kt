@@ -149,7 +149,7 @@ fun Timeline(
                 color = palette.fg.toArgb()
                 textSize = 24f
                 isAntiAlias = true
-                textAlign = Paint.Align.Left
+                textAlign = Paint.Align.LEFT
             }
 
             syllables.forEach { syllable ->
@@ -355,7 +355,7 @@ private fun TimeRulerCanvas(
             color = palette.muted.toArgb()
             textSize = 22f
             isAntiAlias = true
-            textAlign = Paint.Align.Left
+            textAlign = Paint.Align.LEFT
         }
     }
 
