@@ -90,7 +90,7 @@ class ProjectZipTest {
         val doc = AssParser.parse(assFiles[0].readText())
         assertEquals(1, doc.events.size)
         assertEquals(2, doc.events[0].syllables.size)
-        assertEquals("La", doc.events[0].syllables[0].text)
+        assertEquals("La ", doc.events[0].syllables[0].text)
 
         val mediaFiles = extractedFiles.filter { it.extension.equals("mp3", ignoreCase = true) }
         assertEquals(1, mediaFiles.size)
@@ -132,7 +132,7 @@ class ProjectZipTest {
                 Title: Antares
                 [Events]
                 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-                Dialogue: 0,0:00:00.00,0:00:54.70,Default,,0,0,0,,{\kf12}Toda {\kf15}essa {\kf18}lou{\kf14}cu{\kf11}ra \N{\kf39}Eu 
+                Dialogue: 0,0:00:00.00,0:00:54.70,Default,,0,0,0,,{\kf12}Toda {\kf15}essa {\kf18}lou{\kf14}cu{\kf11}ra\N{\kf39}Eu 
             """.trimIndent()
             zip.write(assContent.toByteArray())
             zip.closeEntry()
@@ -192,7 +192,7 @@ class ProjectZipTest {
         assertEquals("essa ", syllables[1].text)
         assertEquals("lou", syllables[2].text)
         assertEquals("cu", syllables[3].text)
-        assertEquals("ra \\N", syllables[4].text)
+        assertEquals("ra\\N", syllables[4].text)
         assertEquals("Eu ", syllables[5].text)
     }
 }

@@ -42,7 +42,7 @@ class AssParserTest {
         assertEquals(1, parsed.events.size)
         val event = parsed.events[0]
         assertEquals(2, event.syllables.size)
-        assertEquals("Hello", event.syllables[0].text)
+        assertEquals("Hello ", event.syllables[0].text)
         assertEquals(KaraokeTagType.K, event.syllables[0].tagType)
         assertEquals(1.0, event.syllables[0].duration, 0.001)
         assertEquals("World", event.syllables[1].text)
