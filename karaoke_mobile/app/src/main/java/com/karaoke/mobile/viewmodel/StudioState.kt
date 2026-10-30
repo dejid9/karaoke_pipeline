@@ -20,6 +20,7 @@ import com.karaoke.mobile.model.WaveformData
 import com.karaoke.mobile.model.WaveformExtractor
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 class StudioState : ViewModel() {

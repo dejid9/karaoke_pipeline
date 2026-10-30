@@ -3,7 +3,9 @@ package com.karaoke.mobile.ui.components
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -74,6 +76,9 @@ fun TimelinePane(
     var lastScroll by remember { mutableLongStateOf(scrollOffsetMs) }
 
     val animatedZoom by animateFloatAsState(targetValue = zoomLevel, label = "zoom")
+
+    val visibleStart = scrollOffsetMs
+    val visibleEnd = visibleStart + (viewportDurationMs / animatedZoom).toLong()
 
     Column(
         modifier = modifier
@@ -243,13 +248,14 @@ private fun drawWaveform(
             }
         } else {
             val path = androidx.compose.ui.graphics.Path()
-            val step = (visibleSamples / width).coerceAtLeast(1)
+            val step = (visibleSamples / width.toInt().coerceAtLeast(1)).coerceAtLeast(1)
             var first = true
             for (x in 0 until width.toInt()) {
                 val sampleIdx = startSample + (x * step)
                 if (sampleIdx >= samples) break
                 var maxAmp = 0f
-                for (s in sampleIdx until (sampleIdx + step).coerceAtMost(samples)) {
+                val endIdx = (sampleIdx + step).coerceAtMost(samples)
+                for (s in sampleIdx until endIdx) {
                     maxAmp = maxOf(maxAmp, waveform.maxAmplitudes[s])
                 }
                 val y = height / 2 - (maxAmp * height / 2)
@@ -264,7 +270,8 @@ private fun drawWaveform(
                 val sampleIdx = startSample + (x * step)
                 if (sampleIdx >= samples) continue
                 var maxAmp = 0f
-                for (s in sampleIdx until (sampleIdx + step).coerceAtMost(samples)) {
+                val endIdx = (sampleIdx + step).coerceAtMost(samples)
+                for (s in sampleIdx until endIdx) {
                     maxAmp = maxOf(maxAmp, waveform.maxAmplitudes[s])
                 }
                 val y = height / 2 + (maxAmp * height / 2)
