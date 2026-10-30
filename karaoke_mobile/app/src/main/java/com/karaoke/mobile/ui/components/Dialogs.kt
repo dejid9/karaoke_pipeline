@@ -396,6 +396,258 @@ private fun ImportOptions(
 }
 
 /**
+ * Оверлей редактирования тайминга (в формате нижней панели без модального окна).
+ * Каждое изменение сохраняется мгновенно без подтверждения кнопкой.
+ */
+@Composable
+fun TimingEditorDock(
+    syllableText: String,
+    start: Double,
+    end: Double,
+    maxDuration: Double,
+    palette: KaraokeThemePalette,
+    onTimingChange: (Double, Double) -> Unit,
+    onPreview: (Int, Int) -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+        shape = RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp, bottomStart = 6.dp, bottomEnd = 6.dp),
+        colors = CardDefaults.cardColors(containerColor = palette.panel),
+        border = BorderStroke(1.5.dp, palette.accent.copy(alpha = 0.8f))
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+            // Верхняя строка: заголовок, длительность и кнопка закрытия
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "Тайминг: «$syllableText»",
+                        color = palette.fg,
+                        fontSize = 12.sp,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                        maxLines = 1
+                    )
+                    Text(
+                        text = "(%.2f с)".format((end - start).coerceAtLeast(0.0)),
+                        color = palette.accent,
+                        fontSize = 11.sp,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
+                    )
+                }
+                IconButton(onClick = onClose, modifier = Modifier.size(22.dp)) {
+                    Icon(Icons.Default.Close, contentDescription = "Close", tint = palette.muted, modifier = Modifier.size(15.dp))
+                }
+            }
+
+            Spacer(modifier = Modifier.height(3.dp))
+
+            // Строка 1: Начало (Start)
+            TimingAdjustRow(
+                label = "Начало",
+                value = start,
+                minValue = 0.0,
+                maxValue = (end - 0.01).coerceAtLeast(0.0),
+                palette = palette,
+                onValueChange = { onTimingChange(it, end) }
+            )
+
+            Spacer(modifier = Modifier.height(2.dp))
+
+            // Строка 2: Конец (End)
+            TimingAdjustRow(
+                label = "Конец",
+                value = end,
+                minValue = (start + 0.01),
+                maxValue = maxDuration.coerceAtLeast(start + 1.0),
+                palette = palette,
+                onValueChange = { onTimingChange(start, it) }
+            )
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // Строка 3: Прослушивание слога и соседних слогов (контекст)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Слушать:",
+                    color = palette.muted,
+                    fontSize = 10.sp,
+                    modifier = Modifier.padding(end = 2.dp)
+                )
+
+                // -2 слога
+                OutlinedButton(
+                    onClick = { onPreview(2, 0) },
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 1.dp),
+                    modifier = Modifier.height(24.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = palette.fg),
+                    border = BorderStroke(1.dp, palette.border.copy(alpha = 0.6f)),
+                    shape = RoundedCornerShape(4.dp)
+                ) {
+                    Text("◀ -2", fontSize = 10.sp)
+                }
+
+                // -1 слог
+                OutlinedButton(
+                    onClick = { onPreview(1, 0) },
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 1.dp),
+                    modifier = Modifier.height(24.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = palette.fg),
+                    border = BorderStroke(1.dp, palette.border.copy(alpha = 0.6f)),
+                    shape = RoundedCornerShape(4.dp)
+                ) {
+                    Text("◀ -1", fontSize = 10.sp)
+                }
+
+                // Этот слог (основная кнопка)
+                Button(
+                    onClick = { onPreview(0, 0) },
+                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 1.dp),
+                    modifier = Modifier.weight(1f).height(24.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.accent, contentColor = palette.accentFg),
+                    shape = RoundedCornerShape(4.dp)
+                ) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(13.dp))
+                    Spacer(modifier = Modifier.width(2.dp))
+                    Text("Этот слог", fontSize = 10.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                }
+
+                // +1 слог
+                OutlinedButton(
+                    onClick = { onPreview(0, 1) },
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 1.dp),
+                    modifier = Modifier.height(24.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = palette.fg),
+                    border = BorderStroke(1.dp, palette.border.copy(alpha = 0.6f)),
+                    shape = RoundedCornerShape(4.dp)
+                ) {
+                    Text("+1 ▶", fontSize = 10.sp)
+                }
+
+                // +2 слога
+                OutlinedButton(
+                    onClick = { onPreview(0, 2) },
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 1.dp),
+                    modifier = Modifier.height(24.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = palette.fg),
+                    border = BorderStroke(1.dp, palette.border.copy(alpha = 0.6f)),
+                    shape = RoundedCornerShape(4.dp)
+                ) {
+                    Text("+2 ▶", fontSize = 10.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TimingAdjustRow(
+    label: String,
+    value: Double,
+    minValue: Double,
+    maxValue: Double,
+    palette: KaraokeThemePalette,
+    onValueChange: (Double) -> Unit
+) {
+    var textInput by remember(value) { mutableStateOf("%.2f".format(value)) }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = "$label:",
+            color = palette.fg,
+            fontSize = 11.sp,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+            modifier = Modifier.width(44.dp)
+        )
+
+        // Кнопка -0.01
+        OutlinedButton(
+            onClick = {
+                val newVal = (kotlin.math.round((value - 0.01) * 100.0) / 100.0).coerceIn(minValue, maxValue)
+                onValueChange(newVal)
+            },
+            contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp),
+            modifier = Modifier.height(24.dp).width(30.dp),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = palette.fg),
+            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.7f)),
+            shape = RoundedCornerShape(4.dp)
+        ) {
+            Text("-", fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+        }
+
+        // Поле ручного ввода
+        OutlinedTextField(
+            value = textInput,
+            onValueChange = { str ->
+                textInput = str
+                val parsed = str.replace(',', '.').toDoubleOrNull()
+                if (parsed != null && parsed in minValue..maxValue) {
+                    onValueChange(parsed)
+                }
+            },
+            singleLine = true,
+            modifier = Modifier.width(70.dp).height(36.dp),
+            textStyle = LocalTextStyle.current.copy(
+                color = palette.fg,
+                fontSize = 11.sp,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            ),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = palette.fg,
+                unfocusedTextColor = palette.fg,
+                focusedContainerColor = palette.inputBg,
+                unfocusedContainerColor = palette.inputBg,
+                focusedBorderColor = palette.accent,
+                unfocusedBorderColor = palette.border.copy(alpha = 0.7f),
+                cursorColor = palette.accent
+            )
+        )
+
+        // Кнопка +0.01
+        OutlinedButton(
+            onClick = {
+                val newVal = (kotlin.math.round((value + 0.01) * 100.0) / 100.0).coerceIn(minValue, maxValue)
+                onValueChange(newVal)
+            },
+            contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp),
+            modifier = Modifier.height(24.dp).width(30.dp),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = palette.fg),
+            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.7f)),
+            shape = RoundedCornerShape(4.dp)
+        ) {
+            Text("+", fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+        }
+
+        // Слайдер
+        Slider(
+            value = value.toFloat().coerceIn(minValue.toFloat(), maxValue.toFloat()),
+            onValueChange = { onValueChange(it.toDouble()) },
+            valueRange = minValue.toFloat()..maxValue.toFloat().coerceAtLeast(minValue.toFloat() + 0.01f),
+            colors = SliderDefaults.colors(
+                thumbColor = palette.accent,
+                activeTrackColor = palette.accent,
+                inactiveTrackColor = palette.raised
+            ),
+            modifier = Modifier.weight(1f).height(18.dp)
+        )
+    }
+}
+
+/**
  * Диалог редактирования тайминга
  */
 @Composable

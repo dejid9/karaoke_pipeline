@@ -61,6 +61,8 @@ data class StudioUiState(
     val savedProjects: List<ProjectSummary> = emptyList(),
     val editTextId: String? = null,
     val editTextValue: String = "",
+    val editTextRomanization: String = "",
+    val editIsUnspoken: Boolean = false,
     val showTimingEditor: Boolean = false,
     val timingEditId: String? = null,
     val timingStart: Double = 0.0,
@@ -68,6 +70,7 @@ data class StudioUiState(
     val waveformData: List<Float> = emptyList(),
     val zoomLevel: Float = 1.0f,
     val scrollOffset: Float = 0.0f,
+    val canvasWidth: Float = 0f,
     val showHelp: Boolean = false,
     val autoScroll: Boolean = true,
     val defaultTagType: KaraokeTagType = KaraokeTagType.K,
@@ -652,7 +655,10 @@ class StudioState : ViewModel() {
         val syllable = editor.getAllSyllables().find { it.id == id } ?: return
         _uiState.value = _uiState.value.copy(
             editTextId = id,
-            editTextValue = syllable.text
+            editTextValue = syllable.text,
+            editTextRomanization = syllable.romanization ?: "",
+            editIsUnspoken = syllable.isUnspoken,
+            activeSyllableId = id
         )
     }
 
@@ -660,15 +666,26 @@ class StudioState : ViewModel() {
         _uiState.value = _uiState.value.copy(editTextValue = value)
     }
 
+    fun updateEditRomanization(value: String) {
+        _uiState.value = _uiState.value.copy(editTextRomanization = value)
+    }
+
+    fun toggleEditUnspoken() {
+        _uiState.value = _uiState.value.copy(editIsUnspoken = !_uiState.value.editIsUnspoken)
+    }
+
     fun commitEditText() {
         val id = _uiState.value.editTextId ?: return
         val text = _uiState.value.editTextValue
-        val result = editor.setText(id, text)
+        val romanization = _uiState.value.editTextRomanization.ifBlank { null }
+        val isUnspoken = _uiState.value.editIsUnspoken
+        val result = editor.updateSyllable(id, text, romanization, isUnspoken)
         if (result.success) {
             _uiState.value = _uiState.value.copy(
                 syllables = editor.getAllSyllables(),
                 editTextId = null,
                 editTextValue = "",
+                editTextRomanization = "",
                 canUndo = editor.canUndo,
                 canRedo = editor.canRedo,
                 successMessage = result.message
@@ -679,7 +696,11 @@ class StudioState : ViewModel() {
     }
 
     fun cancelEditText() {
-        _uiState.value = _uiState.value.copy(editTextId = null, editTextValue = "")
+        _uiState.value = _uiState.value.copy(
+            editTextId = null,
+            editTextValue = "",
+            editTextRomanization = ""
+        )
     }
 
     fun splitSyllable(id: String) {
@@ -797,36 +818,44 @@ class StudioState : ViewModel() {
     fun startTimingEdit(id: String) {
         val syllable = editor.getAllSyllables().find { it.id == id } ?: return
         _uiState.value = _uiState.value.copy(
-            showTimingEditor = true,
+            showTimingEditor = false,
             timingEditId = id,
             timingStart = syllable.start,
-            timingEnd = syllable.end
+            timingEnd = syllable.end,
+            activeSyllableId = id
         )
     }
 
     fun updateTiming(start: Double, end: Double) {
-        _uiState.value = _uiState.value.copy(timingStart = start, timingEnd = end)
+        val id = _uiState.value.timingEditId ?: return
+        val validStart = (kotlin.math.round(start * 100.0) / 100.0).coerceAtLeast(0.0)
+        val validEnd = (kotlin.math.round(end * 100.0) / 100.0).coerceAtLeast(validStart + 0.01)
+        editor.setTiming(id, validStart, validEnd)
+        _uiState.value = _uiState.value.copy(
+            timingStart = validStart,
+            timingEnd = validEnd,
+            syllables = editor.getAllSyllables(),
+            canUndo = editor.canUndo,
+            canRedo = editor.canRedo
+        )
     }
 
     fun commitTiming() {
-        val id = _uiState.value.timingEditId ?: return
-        val result = editor.setTiming(id, _uiState.value.timingStart, _uiState.value.timingEnd)
-        if (result.success) {
-            _uiState.value = _uiState.value.copy(
-                syllables = editor.getAllSyllables(),
-                showTimingEditor = false,
-                timingEditId = null,
-                canUndo = editor.canUndo,
-                canRedo = editor.canRedo,
-                successMessage = result.message
-            )
-        } else {
-            viewModelScope.launch { _events.emit(StudioEvent.ShowError(result.message)) }
-        }
+        _uiState.value = _uiState.value.copy(showTimingEditor = false, timingEditId = null)
+    }
+
+    fun closeTimingEdit() {
+        _uiState.value = _uiState.value.copy(showTimingEditor = false, timingEditId = null)
     }
 
     fun cancelTimingEdit() {
         _uiState.value = _uiState.value.copy(showTimingEditor = false, timingEditId = null)
+    }
+
+    fun setCanvasWidth(width: Float) {
+        if (width > 0f && kotlin.math.abs(_uiState.value.canvasWidth - width) > 1f) {
+            _uiState.value = _uiState.value.copy(canvasWidth = width)
+        }
     }
 
     // --- Темы ---
@@ -912,6 +941,8 @@ class StudioState : ViewModel() {
         _uiState.value = _uiState.value.copy(playbackSpeed = speed)
     }
 
+    private var rangePlayJob: kotlinx.coroutines.Job? = null
+
     private fun startPlaybackPolling() {
         viewModelScope.launch {
             while (mediaPlayer?.isPlaying == true) {
@@ -919,19 +950,64 @@ class StudioState : ViewModel() {
                 val state = _uiState.value
                 val pps = 50f * state.zoomLevel
                 val playheadPx = (pos * pps).toFloat()
+                val visibleWidth = if (state.canvasWidth > 50f) state.canvasWidth else 360f
+
                 val newScroll = if (state.autoScroll) {
-                    if (playheadPx > state.scrollOffset + 280f || playheadPx < state.scrollOffset) {
-                        (playheadPx - 60f).coerceAtLeast(0f)
-                    } else state.scrollOffset
-                } else state.scrollOffset
+                    val threshold85 = state.scrollOffset + visibleWidth * 0.85f
+                    if (playheadPx >= threshold85) {
+                        (playheadPx - visibleWidth * 0.85f).coerceAtLeast(0f)
+                    } else if (playheadPx < state.scrollOffset) {
+                        (playheadPx - visibleWidth * 0.15f).coerceAtLeast(0f)
+                    } else {
+                        state.scrollOffset
+                    }
+                } else {
+                    state.scrollOffset
+                }
 
                 _uiState.value = state.copy(playbackPosition = pos, scrollOffset = newScroll)
-                kotlinx.coroutines.delay(50)
+                kotlinx.coroutines.delay(20)
             }
         }
     }
 
+    fun playRange(startSec: Double, endSec: Double) {
+        rangePlayJob?.cancel()
+        val player = mediaPlayer ?: return
+        val startMs = (startSec * 1000).toInt().coerceAtLeast(0)
+        val endMs = (endSec * 1000).toInt().coerceAtLeast(startMs + 10)
+        try {
+            player.seekTo(startMs)
+            player.start()
+            _uiState.value = _uiState.value.copy(isPlaying = true, playbackPosition = startSec)
+            startPlaybackPolling()
+
+            rangePlayJob = viewModelScope.launch {
+                while (player.isPlaying) {
+                    if (player.currentPosition >= endMs) {
+                        player.pause()
+                        _uiState.value = _uiState.value.copy(isPlaying = false, playbackPosition = endSec)
+                        break
+                    }
+                    kotlinx.coroutines.delay(10)
+                }
+            }
+        } catch (e: Exception) {
+            // ignore
+        }
+    }
+
+    fun previewSyllableWithContext(syllableId: String, leftCount: Int = 0, rightCount: Int = 0) {
+        val list = _uiState.value.syllables
+        val idx = list.indexOfFirst { it.id == syllableId }
+        if (idx == -1) return
+        val startSyl = list[kotlin.math.max(0, idx - leftCount)]
+        val endSyl = list[kotlin.math.min(list.size - 1, idx + rightCount)]
+        playRange(startSyl.start, endSyl.end)
+    }
+
     fun stopPlayback() {
+        rangePlayJob?.cancel()
         mediaPlayer?.pause()
         _uiState.value = _uiState.value.copy(isPlaying = false)
     }

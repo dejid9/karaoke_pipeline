@@ -17,7 +17,7 @@ import com.karaoke.mobile.model.KaraokeTagType
 import com.karaoke.mobile.ui.theme.KaraokeThemePalette
 
 /**
- * Компактная панель управления плеером и инструментами редактирования.
+ * Ультракомпактная панель управления плеером и редактированием.
  */
 @Composable
 fun InspectorPane(
@@ -29,8 +29,7 @@ fun InspectorPane(
     canUndo: Boolean,
     canRedo: Boolean,
     palette: KaraokeThemePalette,
-    activeTagType: KaraokeTagType? = null,
-    isCurrentUnspoken: Boolean = false,
+    activeTagType: KaraokeTagType = KaraokeTagType.K,
     onPlayPause: () -> Unit,
     onStop: () -> Unit,
     onSeek: (Double) -> Unit,
@@ -41,9 +40,7 @@ fun InspectorPane(
     onMerge: () -> Unit,
     onInsert: () -> Unit,
     onSetTagType: (KaraokeTagType) -> Unit,
-    onToggleUnspoken: () -> Unit,
     onShowSettings: () -> Unit,
-    onShowThemes: () -> Unit,
     onShowExport: () -> Unit,
     onShowImport: () -> Unit,
     onOpenProjects: () -> Unit = {},
@@ -53,10 +50,10 @@ fun InspectorPane(
         modifier = modifier
             .fillMaxWidth()
             .background(palette.panel)
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp)
     ) {
-        // 1. Компактный транспорт (плей, стоп, таймлайн, время, скорость)
+        // 1. Компактный транспорт (Play/Pause, Stop, Slider, Time, Speed)
         CompactTransportBar(
             isPlaying = isPlaying,
             playbackPosition = playbackPosition,
@@ -71,30 +68,28 @@ fun InspectorPane(
 
         HorizontalDivider(color = palette.border.copy(alpha = 0.25f), thickness = 0.5.dp)
 
-        // 2. Инструменты редактирования (действия со слогами + теги и Непропетое в одной строке)
+        // 2. Инструменты редактирования (Undo, Redo, Разделить, Объединить, + Слог)
         CompactEditingToolbar(
             canUndo = canUndo,
             canRedo = canRedo,
             selectedCount = selectedCount,
-            activeTagType = activeTagType,
-            isCurrentUnspoken = isCurrentUnspoken,
             palette = palette,
             onUndo = onUndo,
             onRedo = onRedo,
             onSplit = onSplit,
             onMerge = onMerge,
-            onInsert = onInsert,
-            onSetTagType = onSetTagType,
-            onToggleUnspoken = onToggleUnspoken
+            onInsert = onInsert
         )
 
         HorizontalDivider(color = palette.border.copy(alpha = 0.25f), thickness = 0.5.dp)
 
-        // 3. Файловые операции и настройки (все 5 кнопок в одну аккуратную строку)
+        // 3. Файловые операции и меню "Тип" (вместо "Тема", со скрытым выбором тега)
         CompactFileToolbar(
             palette = palette,
+            activeTagType = activeTagType,
+            hasSelection = selectedCount > 0,
+            onSetTagType = onSetTagType,
             onShowSettings = onShowSettings,
-            onShowThemes = onShowThemes,
             onShowExport = onShowExport,
             onShowImport = onShowImport,
             onOpenProjects = onOpenProjects
@@ -117,7 +112,7 @@ private fun CompactTransportBar(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(34.dp),
+            .height(32.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
@@ -128,30 +123,30 @@ private fun CompactTransportBar(
                 containerColor = palette.accent,
                 contentColor = palette.accentFg
             ),
-            modifier = Modifier.size(32.dp)
+            modifier = Modifier.size(30.dp)
         ) {
             Icon(
                 if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                 contentDescription = if (isPlaying) "Pause" else "Play",
                 tint = palette.accentFg,
-                modifier = Modifier.size(18.dp)
+                modifier = Modifier.size(16.dp)
             )
         }
 
         // Stop
         IconButton(
             onClick = onStop,
-            modifier = Modifier.size(28.dp)
+            modifier = Modifier.size(26.dp)
         ) {
             Icon(
                 Icons.Default.Stop,
                 contentDescription = "Stop",
                 tint = palette.fg,
-                modifier = Modifier.size(18.dp)
+                modifier = Modifier.size(16.dp)
             )
         }
 
-        // Компактный слайдер
+        // Слайдер
         Slider(
             value = playbackPosition.toFloat().coerceIn(0f, duration.toFloat().coerceAtLeast(0.001f)),
             onValueChange = { onSeek(it.toDouble()) },
@@ -176,13 +171,13 @@ private fun CompactTransportBar(
             maxLines = 1
         )
 
-        // Меню выбора скорости
+        // Скорость
         var speedMenuExpanded by remember { mutableStateOf(false) }
         Box {
             OutlinedButton(
                 onClick = { speedMenuExpanded = true },
-                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
-                modifier = Modifier.height(26.dp),
+                contentPadding = PaddingValues(horizontal = 5.dp, vertical = 2.dp),
+                modifier = Modifier.height(24.dp),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = palette.accent),
                 border = BorderStroke(1.dp, palette.border.copy(alpha = 0.6f)),
                 shape = RoundedCornerShape(4.dp)
@@ -213,182 +208,105 @@ private fun CompactEditingToolbar(
     canUndo: Boolean,
     canRedo: Boolean,
     selectedCount: Int,
-    activeTagType: KaraokeTagType?,
-    isCurrentUnspoken: Boolean,
     palette: KaraokeThemePalette,
     onUndo: () -> Unit,
     onRedo: () -> Unit,
     onSplit: () -> Unit,
     onMerge: () -> Unit,
-    onInsert: () -> Unit,
-    onSetTagType: (KaraokeTagType) -> Unit,
-    onToggleUnspoken: () -> Unit
+    onInsert: () -> Unit
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        // Строка 1: Undo, Redo, Разделить, Объединить, Вставить
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalAlignment = Alignment.CenterVertically
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Undo
+        OutlinedButton(
+            onClick = onUndo,
+            enabled = canUndo,
+            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+            modifier = Modifier.height(26.dp),
+            colors = ButtonDefaults.outlinedButtonColors(
+                contentColor = palette.fg,
+                disabledContentColor = palette.muted.copy(alpha = 0.35f)
+            ),
+            border = BorderStroke(1.dp, if (canUndo) palette.border else palette.border.copy(alpha = 0.2f)),
+            shape = RoundedCornerShape(4.dp)
         ) {
-            // Undo
-            OutlinedButton(
-                onClick = onUndo,
-                enabled = canUndo,
-                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
-                modifier = Modifier.height(28.dp),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = palette.fg,
-                    disabledContentColor = palette.muted.copy(alpha = 0.35f)
-                ),
-                border = BorderStroke(1.dp, if (canUndo) palette.border else palette.border.copy(alpha = 0.2f)),
-                shape = RoundedCornerShape(4.dp)
-            ) {
-                Icon(Icons.Default.Undo, contentDescription = "Undo", modifier = Modifier.size(14.dp))
-            }
-
-            // Redo
-            OutlinedButton(
-                onClick = onRedo,
-                enabled = canRedo,
-                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
-                modifier = Modifier.height(28.dp),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = palette.fg,
-                    disabledContentColor = palette.muted.copy(alpha = 0.35f)
-                ),
-                border = BorderStroke(1.dp, if (canRedo) palette.border else palette.border.copy(alpha = 0.2f)),
-                shape = RoundedCornerShape(4.dp)
-            ) {
-                Icon(Icons.Default.Redo, contentDescription = "Redo", modifier = Modifier.size(14.dp))
-            }
-
-            // Разделить
-            Button(
-                onClick = onSplit,
-                enabled = selectedCount == 1,
-                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
-                modifier = Modifier
-                    .weight(1f)
-                    .height(28.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = palette.raised,
-                    contentColor = palette.fg,
-                    disabledContainerColor = palette.raised.copy(alpha = 0.3f),
-                    disabledContentColor = palette.muted.copy(alpha = 0.35f)
-                ),
-                border = BorderStroke(1.dp, palette.border.copy(alpha = 0.5f)),
-                shape = RoundedCornerShape(4.dp)
-            ) {
-                Text("Разделить", fontSize = 11.sp)
-            }
-
-            // Объединить
-            Button(
-                onClick = onMerge,
-                enabled = selectedCount >= 2,
-                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
-                modifier = Modifier
-                    .weight(1f)
-                    .height(28.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = palette.raised,
-                    contentColor = palette.fg,
-                    disabledContainerColor = palette.raised.copy(alpha = 0.3f),
-                    disabledContentColor = palette.muted.copy(alpha = 0.35f)
-                ),
-                border = BorderStroke(1.dp, palette.border.copy(alpha = 0.5f)),
-                shape = RoundedCornerShape(4.dp)
-            ) {
-                Text("Объединить", fontSize = 11.sp)
-            }
-
-            // Вставить
-            Button(
-                onClick = onInsert,
-                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
-                modifier = Modifier
-                    .weight(1f)
-                    .height(28.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = palette.raised,
-                    contentColor = palette.fg
-                ),
-                border = BorderStroke(1.dp, palette.border.copy(alpha = 0.5f)),
-                shape = RoundedCornerShape(4.dp)
-            ) {
-                Text("+ Слог", fontSize = 11.sp)
-            }
+            Icon(Icons.Default.Undo, contentDescription = "Undo", modifier = Modifier.size(13.dp))
         }
 
-        // Строка 2: Теги (\k, \kf, \ko, \K) И Непропетое В ОДНОЙ СТРОКЕ (экономит вертикальное место)
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalAlignment = Alignment.CenterVertically
+        // Redo
+        OutlinedButton(
+            onClick = onRedo,
+            enabled = canRedo,
+            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+            modifier = Modifier.height(26.dp),
+            colors = ButtonDefaults.outlinedButtonColors(
+                contentColor = palette.fg,
+                disabledContentColor = palette.muted.copy(alpha = 0.35f)
+            ),
+            border = BorderStroke(1.dp, if (canRedo) palette.border else palette.border.copy(alpha = 0.2f)),
+            shape = RoundedCornerShape(4.dp)
         ) {
-            KaraokeTagType.entries.forEach { tagType ->
-                val label = when (tagType) {
-                    KaraokeTagType.K -> "\\k"
-                    KaraokeTagType.KF -> "\\kf"
-                    KaraokeTagType.KO -> "\\ko"
-                    KaraokeTagType.K_CAPITAL -> "\\K"
-                }
-                val isTagActive = (selectedCount > 0 && activeTagType == tagType)
-                OutlinedButton(
-                    onClick = { onSetTagType(tagType) },
-                    enabled = selectedCount > 0,
-                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(28.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        containerColor = if (isTagActive) palette.accent else Color.Transparent,
-                        contentColor = if (isTagActive) palette.accentFg else palette.accent,
-                        disabledContentColor = palette.muted.copy(alpha = 0.35f)
-                    ),
-                    border = BorderStroke(
-                        1.dp,
-                        if (isTagActive) palette.accentAlt else palette.border.copy(alpha = 0.6f)
-                    ),
-                    shape = RoundedCornerShape(4.dp)
-                ) {
-                    Text(label, fontSize = 11.sp, fontWeight = if (isTagActive) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal)
-                }
-            }
+            Icon(Icons.Default.Redo, contentDescription = "Redo", modifier = Modifier.size(13.dp))
+        }
 
-            // Непропетое на этой же строке
-            val isUnspokenActive = selectedCount > 0 && isCurrentUnspoken
-            OutlinedButton(
-                onClick = onToggleUnspoken,
-                enabled = selectedCount > 0,
-                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
-                modifier = Modifier
-                    .weight(1.8f)
-                    .height(28.dp),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    containerColor = if (isUnspokenActive) palette.warning else Color.Transparent,
-                    contentColor = if (isUnspokenActive) Color.White else palette.muted,
-                    disabledContentColor = palette.muted.copy(alpha = 0.35f)
-                ),
-                border = BorderStroke(
-                    1.dp,
-                    if (isUnspokenActive) palette.warning else palette.border.copy(alpha = 0.6f)
-                ),
-                shape = RoundedCornerShape(4.dp)
-            ) {
-                Icon(
-                    Icons.Default.VolumeOff,
-                    contentDescription = "Unspoken",
-                    modifier = Modifier.size(13.dp)
-                )
-                Spacer(modifier = Modifier.width(3.dp))
-                Text(
-                    "Непропетое",
-                    fontSize = 10.sp,
-                    maxLines = 1
-                )
-            }
+        // Разделить
+        Button(
+            onClick = onSplit,
+            enabled = selectedCount == 1,
+            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+            modifier = Modifier
+                .weight(1f)
+                .height(26.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = palette.raised,
+                contentColor = palette.fg,
+                disabledContainerColor = palette.raised.copy(alpha = 0.3f),
+                disabledContentColor = palette.muted.copy(alpha = 0.35f)
+            ),
+            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.5f)),
+            shape = RoundedCornerShape(4.dp)
+        ) {
+            Text("Разделить", fontSize = 11.sp)
+        }
+
+        // Объединить
+        Button(
+            onClick = onMerge,
+            enabled = selectedCount >= 2,
+            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+            modifier = Modifier
+                .weight(1f)
+                .height(26.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = palette.raised,
+                contentColor = palette.fg,
+                disabledContainerColor = palette.raised.copy(alpha = 0.3f),
+                disabledContentColor = palette.muted.copy(alpha = 0.35f)
+            ),
+            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.5f)),
+            shape = RoundedCornerShape(4.dp)
+        ) {
+            Text("Объединить", fontSize = 11.sp)
+        }
+
+        // Вставить
+        Button(
+            onClick = onInsert,
+            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp),
+            modifier = Modifier
+                .weight(1f)
+                .height(26.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = palette.raised,
+                contentColor = palette.fg
+            ),
+            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.5f)),
+            shape = RoundedCornerShape(4.dp)
+        ) {
+            Text("+ Слог", fontSize = 11.sp)
         }
     }
 }
@@ -396,13 +314,14 @@ private fun CompactEditingToolbar(
 @Composable
 private fun CompactFileToolbar(
     palette: KaraokeThemePalette,
+    activeTagType: KaraokeTagType,
+    hasSelection: Boolean,
+    onSetTagType: (KaraokeTagType) -> Unit,
     onShowSettings: () -> Unit,
-    onShowThemes: () -> Unit,
     onShowExport: () -> Unit,
     onShowImport: () -> Unit,
     onOpenProjects: () -> Unit
 ) {
-    // Единая компактная строка для всех 5 действий: Проекты, Импорт, Экспорт, Тема, Настройки
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -429,13 +348,62 @@ private fun CompactFileToolbar(
             onClick = onShowExport,
             modifier = Modifier.weight(1f)
         )
-        CompactActionButton(
-            icon = Icons.Default.Palette,
-            label = "Тема",
-            palette = palette,
-            onClick = onShowThemes,
-            modifier = Modifier.weight(1f)
-        )
+
+        // Кнопка "Тип" с выпадающим меню тегов караоке (заменила кнопку "Тема")
+        var tagMenuExpanded by remember { mutableStateOf(false) }
+        val currentTagLabel = when (activeTagType) {
+            KaraokeTagType.K -> "\\k"
+            KaraokeTagType.KF -> "\\kf"
+            KaraokeTagType.KO -> "\\ko"
+            KaraokeTagType.K_CAPITAL -> "\\K"
+        }
+
+        Box(modifier = Modifier.weight(1f)) {
+            OutlinedButton(
+                onClick = { tagMenuExpanded = true },
+                contentPadding = PaddingValues(horizontal = 2.dp, vertical = 2.dp),
+                modifier = Modifier.fillMaxWidth().height(26.dp),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    containerColor = if (hasSelection) palette.accent.copy(alpha = 0.15f) else Color.Transparent,
+                    contentColor = if (hasSelection) palette.accent else palette.fg
+                ),
+                border = BorderStroke(1.dp, if (hasSelection) palette.accent else palette.border.copy(alpha = 0.6f)),
+                shape = RoundedCornerShape(4.dp)
+            ) {
+                Icon(Icons.Default.Style, contentDescription = "Тип", modifier = Modifier.size(12.dp), tint = palette.accent)
+                Spacer(modifier = Modifier.width(2.dp))
+                Text("Тип: $currentTagLabel", fontSize = 10.sp, maxLines = 1)
+            }
+
+            DropdownMenu(
+                expanded = tagMenuExpanded,
+                onDismissRequest = { tagMenuExpanded = false },
+                modifier = Modifier.background(palette.panel)
+            ) {
+                listOf(
+                    KaraokeTagType.K to "\\k — Обычный (дискретный)",
+                    KaraokeTagType.KF to "\\kf — Плавный (fill)",
+                    KaraokeTagType.KO to "\\ko — Контурный (outline)",
+                    KaraokeTagType.K_CAPITAL to "\\K — Заглавный (перелив)"
+                ).forEach { (tag, desc) ->
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = desc,
+                                color = if (tag == activeTagType) palette.accent else palette.fg,
+                                fontWeight = if (tag == activeTagType) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal,
+                                fontSize = 12.sp
+                            )
+                        },
+                        onClick = {
+                            onSetTagType(tag)
+                            tagMenuExpanded = false
+                        }
+                    )
+                }
+            }
+        }
+
         CompactActionButton(
             icon = Icons.Default.Settings,
             label = "Опции",
@@ -457,7 +425,7 @@ private fun CompactActionButton(
     OutlinedButton(
         onClick = onClick,
         contentPadding = PaddingValues(horizontal = 2.dp, vertical = 2.dp),
-        modifier = modifier.height(28.dp),
+        modifier = modifier.height(26.dp),
         colors = ButtonDefaults.outlinedButtonColors(
             containerColor = Color.Transparent,
             contentColor = palette.fg
@@ -465,7 +433,7 @@ private fun CompactActionButton(
         border = BorderStroke(1.dp, palette.border.copy(alpha = 0.6f)),
         shape = RoundedCornerShape(4.dp)
     ) {
-        Icon(icon, contentDescription = label, modifier = Modifier.size(13.dp), tint = palette.accent)
+        Icon(icon, contentDescription = label, modifier = Modifier.size(12.dp), tint = palette.accent)
         Spacer(modifier = Modifier.width(3.dp))
         Text(label, fontSize = 10.sp, maxLines = 1)
     }

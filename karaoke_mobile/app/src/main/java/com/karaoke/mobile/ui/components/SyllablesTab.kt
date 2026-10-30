@@ -14,6 +14,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -22,7 +23,7 @@ import com.karaoke.mobile.model.KaraokeTagType
 import com.karaoke.mobile.ui.theme.KaraokeThemePalette
 
 /**
- * Компактный список слогов с inline-редактированием.
+ * Компактный список слогов с inline-редактированием текста, романизации и статуса "Непропетое".
  */
 @Composable
 fun SyllablesTab(
@@ -31,10 +32,14 @@ fun SyllablesTab(
     activeSyllableId: String?,
     editTextId: String?,
     editTextValue: String,
+    editTextRomanization: String,
+    editIsUnspoken: Boolean,
     palette: KaraokeThemePalette,
     onSelect: (String, Boolean) -> Unit,
     onStartEdit: (String) -> Unit,
     onEditValueChange: (String) -> Unit,
+    onEditRomanizationChange: (String) -> Unit,
+    onToggleEditUnspoken: () -> Unit,
     onCommitEdit: () -> Unit,
     onCancelEdit: () -> Unit,
     onStartTimingEdit: (String) -> Unit,
@@ -47,16 +52,21 @@ fun SyllablesTab(
         verticalArrangement = Arrangement.spacedBy(3.dp)
     ) {
         items(syllables, key = { it.id }) { syllable ->
+            val isEditing = syllable.id == editTextId
             SyllableItem(
                 syllable = syllable,
                 isSelected = syllable.id in selectedIds,
                 isActive = syllable.id == activeSyllableId,
-                isEditing = syllable.id == editTextId,
+                isEditing = isEditing,
                 editValue = editTextValue,
+                editRomanization = editTextRomanization,
+                editIsUnspoken = editIsUnspoken,
                 palette = palette,
                 onSelect = { addToSelection -> onSelect(syllable.id, addToSelection) },
                 onStartEdit = { onStartEdit(syllable.id) },
                 onEditValueChange = onEditValueChange,
+                onEditRomanizationChange = onEditRomanizationChange,
+                onToggleEditUnspoken = onToggleEditUnspoken,
                 onCommitEdit = onCommitEdit,
                 onCancelEdit = onCancelEdit,
                 onStartTimingEdit = { onStartTimingEdit(syllable.id) },
@@ -73,10 +83,14 @@ private fun SyllableItem(
     isActive: Boolean,
     isEditing: Boolean,
     editValue: String,
+    editRomanization: String,
+    editIsUnspoken: Boolean,
     palette: KaraokeThemePalette,
     onSelect: (Boolean) -> Unit,
     onStartEdit: () -> Unit,
     onEditValueChange: (String) -> Unit,
+    onEditRomanizationChange: (String) -> Unit,
+    onToggleEditUnspoken: () -> Unit,
     onCommitEdit: () -> Unit,
     onCancelEdit: () -> Unit,
     onStartTimingEdit: () -> Unit,
@@ -90,7 +104,7 @@ private fun SyllableItem(
     val borderColor = when {
         isActive -> palette.accent
         isSelected -> palette.selection
-        else -> palette.border.copy(alpha = 0.35f)
+        else -> palette.border.copy(alpha = 0.4f)
     }
 
     Card(
@@ -101,8 +115,8 @@ private fun SyllableItem(
         colors = CardDefaults.cardColors(containerColor = bgColor),
         border = BorderStroke(if (isActive || isSelected) 1.5.dp else 1.dp, borderColor)
     ) {
-        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
-            // Верхняя строка: тег, время и действия в одну линию
+        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)) {
+            // Верхняя строка: тег, время и действия
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -112,7 +126,6 @@ private fun SyllableItem(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    // Тег типа (\k, \kf, \ko, \K)
                     val tagLabel = when (syllable.tagType) {
                         KaraokeTagType.K -> "\\k"
                         KaraokeTagType.KF -> "\\kf"
@@ -125,14 +138,13 @@ private fun SyllableItem(
                         border = BorderStroke(0.5.dp, if (syllable.isUnspoken) palette.warning else palette.accent.copy(alpha = 0.5f))
                     ) {
                         Text(
-                            text = if (syllable.isUnspoken) "$tagLabel (mute)" else tagLabel,
+                            text = if (syllable.isUnspoken) "$tagLabel (пауза)" else tagLabel,
                             color = if (syllable.isUnspoken) palette.warning else palette.accent,
                             fontSize = 10.sp,
                             modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                         )
                     }
 
-                    // Интервал времени
                     Text(
                         text = "${formatTime(syllable.start)} — ${formatTime(syllable.end)}",
                         color = palette.muted,
@@ -140,14 +152,13 @@ private fun SyllableItem(
                     )
                 }
 
-                // Кнопки действий (редактировать, тайминг, удалить)
                 if (!isEditing) {
                     Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                         IconButton(onClick = onStartEdit, modifier = Modifier.size(24.dp)) {
                             Icon(Icons.Default.Edit, contentDescription = "Edit", tint = palette.muted, modifier = Modifier.size(15.dp))
                         }
                         IconButton(onClick = onStartTimingEdit, modifier = Modifier.size(24.dp)) {
-                            Icon(Icons.Default.Schedule, contentDescription = "Timing", tint = palette.muted, modifier = Modifier.size(15.dp))
+                            Icon(Icons.Default.Schedule, contentDescription = "Timing", tint = palette.accent, modifier = Modifier.size(15.dp))
                         }
                         IconButton(onClick = onDelete, modifier = Modifier.size(24.dp)) {
                             Icon(Icons.Default.Delete, contentDescription = "Delete", tint = palette.danger.copy(alpha = 0.7f), modifier = Modifier.size(15.dp))
@@ -156,32 +167,107 @@ private fun SyllableItem(
                 }
             }
 
-            // Текст слога
+            // Режим редактирования слога
             if (isEditing) {
                 Spacer(modifier = Modifier.height(4.dp))
+
+                // Поле ввода текста слога
                 OutlinedTextField(
                     value = editValue,
                     onValueChange = onEditValueChange,
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
+                    label = { Text("Текст слога", color = palette.muted, fontSize = 11.sp) },
                     textStyle = LocalTextStyle.current.copy(color = palette.fg, fontSize = 14.sp),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = palette.accent,
-                        unfocusedBorderColor = palette.border,
+                        focusedTextColor = palette.fg,
+                        unfocusedTextColor = palette.fg,
                         focusedContainerColor = palette.inputBg,
-                        unfocusedContainerColor = palette.inputBg
-                    ),
-                    trailingIcon = {
-                        Row {
-                            IconButton(onClick = onCommitEdit, modifier = Modifier.size(28.dp)) {
-                                Icon(Icons.Default.Check, contentDescription = "OK", tint = palette.success, modifier = Modifier.size(18.dp))
-                            }
-                            IconButton(onClick = onCancelEdit, modifier = Modifier.size(28.dp)) {
-                                Icon(Icons.Default.Close, contentDescription = "Cancel", tint = palette.danger, modifier = Modifier.size(18.dp))
-                            }
+                        unfocusedContainerColor = palette.inputBg,
+                        focusedBorderColor = palette.accent,
+                        unfocusedBorderColor = palette.border.copy(alpha = 0.7f),
+                        cursorColor = palette.accent
+                    )
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                // Поле ввода романизации (транслита)
+                OutlinedTextField(
+                    value = editRomanization,
+                    onValueChange = onEditRomanizationChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Романизация / транслит", color = palette.muted, fontSize = 11.sp) },
+                    textStyle = LocalTextStyle.current.copy(color = palette.fg, fontSize = 13.sp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = palette.fg,
+                        unfocusedTextColor = palette.fg,
+                        focusedContainerColor = palette.inputBg,
+                        unfocusedContainerColor = palette.inputBg,
+                        focusedBorderColor = palette.accent,
+                        unfocusedBorderColor = palette.border.copy(alpha = 0.7f),
+                        cursorColor = palette.accent
+                    )
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                // Строка с кнопкой "Непропетое" и кнопками сохранения/отмены
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Кнопка переключения "Непропетое" возле слога
+                    OutlinedButton(
+                        onClick = onToggleEditUnspoken,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        modifier = Modifier.height(28.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = if (editIsUnspoken) palette.warning.copy(alpha = 0.25f) else Color.Transparent,
+                            contentColor = if (editIsUnspoken) palette.warning else palette.muted
+                        ),
+                        border = BorderStroke(1.dp, if (editIsUnspoken) palette.warning else palette.border.copy(alpha = 0.6f)),
+                        shape = RoundedCornerShape(4.dp)
+                    ) {
+                        Icon(
+                            if (editIsUnspoken) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            if (editIsUnspoken) "Непропетое" else "Пропетое",
+                            fontSize = 11.sp
+                        )
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Button(
+                            onClick = onCommitEdit,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            modifier = Modifier.height(28.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = palette.accent, contentColor = palette.accentFg),
+                            shape = RoundedCornerShape(4.dp)
+                        ) {
+                            Icon(Icons.Default.Check, contentDescription = "Save", modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text("OK", fontSize = 11.sp)
+                        }
+
+                        OutlinedButton(
+                            onClick = onCancelEdit,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            modifier = Modifier.height(28.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = palette.muted),
+                            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.6f)),
+                            shape = RoundedCornerShape(4.dp)
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = "Cancel", modifier = Modifier.size(14.dp))
                         }
                     }
-                )
+                }
             } else {
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
@@ -195,15 +281,18 @@ private fun SyllableItem(
                         .fillMaxWidth()
                         .clickable { onStartEdit() }
                 )
-            }
 
-            // Романизация (если есть)
-            syllable.romanization?.let { rom ->
-                Text(
-                    text = rom,
-                    color = palette.muted.copy(alpha = 0.75f),
-                    fontSize = 11.sp
-                )
+                // Романизация (если заполнена)
+                syllable.romanization?.let { rom ->
+                    if (rom.isNotBlank()) {
+                        Text(
+                            text = rom,
+                            color = palette.muted.copy(alpha = 0.8f),
+                            fontSize = 11.sp,
+                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                        )
+                    }
+                }
             }
         }
     }

@@ -2,7 +2,6 @@ package com.karaoke.mobile.ui.theme
 
 import android.app.Activity
 import android.os.Build
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
@@ -59,7 +58,8 @@ val NavyDarkPalette = KaraokeThemePalette(
     selection = NavySelection,
     success = NavySuccess,
     warning = NavyWarning,
-    danger = NavyDanger
+    danger = NavyDanger,
+    accentFg = Color.White
 )
 
 val NavyLightPalette = KaraokeThemePalette(
@@ -80,63 +80,140 @@ val NavyLightPalette = KaraokeThemePalette(
     selection = NavyLightPrimaryAlt,
     success = Color(0xFF2F8A52),
     warning = Color(0xFFA56C00),
-    danger = Color(0xFFB83F48)
+    danger = Color(0xFFB83F48),
+    accentFg = Color.White
 )
 
-val PurpleDarkPalette = NavyDarkPalette.copy(
+val PurpleDarkPalette = KaraokeThemePalette(
     name = "purple_dark",
+    isDark = true,
     accent = PurplePrimary,
     accentAlt = PurplePrimaryAlt,
     bg = PurpleBg,
     panel = PurplePanel,
-    raised = PurpleRaised
+    raised = PurpleRaised,
+    inputBg = PurplePanel,
+    fg = Color(0xFFF6EEFC),
+    muted = Color(0xFFB29EC2),
+    border = Color(0xFF473456),
+    canvas = Color(0xFF140F1A),
+    canvasAlt = Color(0xFF1B1423),
+    grid = Color(0xFF33243F),
+    selection = PurplePrimaryAlt,
+    success = Color(0xFF72D19A),
+    warning = Color(0xFFE6BD5B),
+    danger = Color(0xFFFF747E),
+    accentFg = Color.White
 )
 
-val RedDarkPalette = NavyDarkPalette.copy(
+val RedDarkPalette = KaraokeThemePalette(
     name = "red_dark",
+    isDark = true,
     accent = RedPrimary,
     accentAlt = RedPrimaryAlt,
     bg = RedBg,
     panel = RedPanel,
-    raised = RedRaised
+    raised = RedRaised,
+    inputBg = RedPanel,
+    fg = Color(0xFFFCEEEE),
+    muted = Color(0xFFC29EA3),
+    border = Color(0xFF563439),
+    canvas = Color(0xFF180F11),
+    canvasAlt = Color(0xFF211417),
+    grid = Color(0xFF3F2428),
+    selection = RedPrimaryAlt,
+    success = Color(0xFF72D19A),
+    warning = Color(0xFFE6BD5B),
+    danger = Color(0xFFFF747E),
+    accentFg = Color.White
 )
 
-val GreenDarkPalette = NavyDarkPalette.copy(
+val GreenDarkPalette = KaraokeThemePalette(
     name = "green_dark",
+    isDark = true,
     accent = GreenPrimary,
     accentAlt = GreenPrimaryAlt,
     bg = GreenBg,
     panel = GreenPanel,
-    raised = GreenRaised
+    raised = GreenRaised,
+    inputBg = GreenPanel,
+    fg = Color(0xFFEEFCF1),
+    muted = Color(0xFF9EC2A5),
+    border = Color(0xFF34563C),
+    canvas = Color(0xFF0F1812),
+    canvasAlt = Color(0xFF142118),
+    grid = Color(0xFF243F2A),
+    selection = GreenPrimaryAlt,
+    success = Color(0xFF72D19A),
+    warning = Color(0xFFE6BD5B),
+    danger = Color(0xFFFF747E),
+    accentFg = Color.White
 )
 
-val YellowDarkPalette = NavyDarkPalette.copy(
+val YellowDarkPalette = KaraokeThemePalette(
     name = "yellow_dark",
+    isDark = true,
     accent = YellowPrimary,
     accentAlt = YellowPrimaryAlt,
     bg = YellowBg,
     panel = YellowPanel,
     raised = YellowRaised,
-    accentFg = Color.Black
+    inputBg = YellowPanel,
+    fg = Color(0xFFFCF9EE),
+    muted = Color(0xFFC2BBA0),
+    border = Color(0xFF564F34),
+    canvas = Color(0xFF18160E),
+    canvasAlt = Color(0xFF211E13),
+    grid = Color(0xFF3F3924),
+    selection = YellowPrimaryAlt,
+    success = Color(0xFF72D19A),
+    warning = Color(0xFFE6BD5B),
+    danger = Color(0xFFFF747E),
+    accentFg = Color(0xFF17130A)
 )
 
-val VaporDarkPalette = NavyDarkPalette.copy(
+val VaporDarkPalette = KaraokeThemePalette(
     name = "vapor_dark",
+    isDark = true,
     accent = VaporPrimary,
     accentAlt = VaporPrimaryAlt,
     bg = VaporBg,
     panel = VaporPanel,
-    raised = VaporRaised
+    raised = VaporRaised,
+    inputBg = VaporPanel,
+    fg = Color(0xFFF9ECFF),
+    muted = Color(0xFFBBA5C8),
+    border = Color(0xFF4B3561),
+    canvas = Color(0xFF100A19),
+    canvasAlt = Color(0xFF191024),
+    grid = Color(0xFF352348),
+    selection = VaporPrimaryAlt,
+    success = Color(0xFF72D19A),
+    warning = Color(0xFFE6BD5B),
+    danger = Color(0xFFFF747E),
+    accentFg = Color(0xFF251026)
 )
 
-val CappuccinoDarkPalette = NavyDarkPalette.copy(
+val CappuccinoDarkPalette = KaraokeThemePalette(
     name = "cappuccino_dark",
+    isDark = true,
     accent = CappuccinoPrimary,
     accentAlt = CappuccinoPrimaryAlt,
     bg = CappuccinoBg,
     panel = CappuccinoPanel,
     raised = CappuccinoRaised,
-    accentFg = Color.Black
+    inputBg = CappuccinoPanel,
+    fg = Color(0xFFF1E5DC),
+    muted = Color(0xFFB5A398),
+    border = Color(0xFF4D3E35),
+    canvas = Color(0xFF15110F),
+    canvasAlt = Color(0xFF1E1814),
+    grid = Color(0xFF392E28),
+    selection = CappuccinoPrimaryAlt,
+    success = Color(0xFF72D19A),
+    warning = Color(0xFFE6BD5B),
+    danger = Color(0xFFFF747E),
+    accentFg = Color(0xFF21150F)
 )
 
 val allThemes = listOf(

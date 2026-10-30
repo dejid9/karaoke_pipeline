@@ -177,6 +177,22 @@ sealed class EditCommand {
             syllables.map { if (it.id in ids) it.copy(isUnspoken = newUnspoken) else it }
     }
 
+    data class EditFull(
+        val id: String,
+        val oldText: String,
+        val newText: String,
+        val oldRomanization: String?,
+        val newRomanization: String?,
+        val oldUnspoken: Boolean,
+        val newUnspoken: Boolean
+    ) : EditCommand() {
+        override fun undo(syllables: List<KaraokeSyllable>): List<KaraokeSyllable> =
+            syllables.map { if (it.id == id) it.copy(text = oldText, romanization = oldRomanization, isUnspoken = oldUnspoken) else it }
+
+        override fun redo(syllables: List<KaraokeSyllable>): List<KaraokeSyllable> =
+            syllables.map { if (it.id == id) it.copy(text = newText, romanization = newRomanization, isUnspoken = newUnspoken) else it }
+    }
+
     data class BatchEdit(
         val oldSyllables: List<KaraokeSyllable>,
         val newSyllables: List<KaraokeSyllable>
@@ -237,6 +253,22 @@ class AssEditor(initialSyllables: List<KaraokeSyllable> = emptyList()) {
         if (syllable.text == newText) return EditResult(true, "Без изменений")
         execute(EditCommand.SetText(id, syllable.text, newText))
         return EditResult(true, "Текст обновлён", syllables)
+    }
+
+    fun updateSyllable(id: String, text: String, romanization: String?, isUnspoken: Boolean): EditResult {
+        val syllable = syllables.find { it.id == id }
+            ?: return EditResult(false, "Слог не найден")
+        val cmd = EditCommand.EditFull(
+            id = id,
+            oldText = syllable.text,
+            newText = text,
+            oldRomanization = syllable.romanization,
+            newRomanization = romanization,
+            oldUnspoken = syllable.isUnspoken,
+            newUnspoken = isUnspoken
+        )
+        execute(cmd)
+        return EditResult(true, "Слог обновлён", syllables)
     }
 
     fun setRomanization(id: String, romanization: String?): EditResult {
