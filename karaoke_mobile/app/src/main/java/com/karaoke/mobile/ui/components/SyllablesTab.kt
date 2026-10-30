@@ -166,8 +166,8 @@ private fun SyllableItem(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = syllable.text.ifEmpty { "(пусто)" },
-                        color = if (syllable.text.isEmpty()) palette.muted else palette.fg,
+                        text = syllable.displayText,
+                        color = if (syllable.isUnspoken || syllable.text.isBlank()) palette.muted else palette.fg,
                         fontSize = 16.sp,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,

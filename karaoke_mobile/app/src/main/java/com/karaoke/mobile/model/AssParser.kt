@@ -7,7 +7,8 @@ package com.karaoke.mobile.model
 object AssParser {
 
     fun parse(text: String): AssDocument {
-        val lines = text.lines()
+        val cleanText = text.removePrefix("\uFEFF")
+        val lines = cleanText.lines()
         var section: String? = null
         var title = ""
         var scriptType = "v4.00+"
@@ -73,7 +74,7 @@ object AssParser {
 
     /**
      * Парсит караоке-слоги из текста события.
-     * Поддерживает теги \k, \kf, \ko, \K с последующим текстом.
+     * Поддерживает теги \k, \kf, \ko, \K с последующим текстом и паузами.
      */
     fun parseKaraokeSyllables(event: AssEvent): List<KaraokeSyllable> {
         val text = event.text
@@ -87,11 +88,13 @@ object AssParser {
         if (matches.isEmpty()) {
             // Нет караоке-тегов — весь текст как один слог
             if (text.isNotBlank()) {
+                val clean = text.removeAssTags()
                 return listOf(
                     KaraokeSyllable(
-                        text = text.removeAssTags().trim(),
+                        text = clean,
                         start = event.start,
                         end = event.end,
+                        isUnspoken = clean.isBlank(),
                         styleName = event.styleName,
                         actor = event.actor,
                         effect = event.effect,
@@ -104,8 +107,7 @@ object AssParser {
             return emptyList()
         }
 
-        var lastEnd = 0
-        for (match in matches) {
+        matches.forEachIndexed { index, match ->
             val rawTag = match.groupValues[1]
             val tagType = when {
                 rawTag == "K" -> KaraokeTagType.K_CAPITAL
@@ -113,34 +115,34 @@ object AssParser {
                 rawTag.equals("ko", ignoreCase = true) -> KaraokeTagType.KO
                 else -> KaraokeTagType.K
             }
-            val centis = match.groupValues[2].toIntOrNull() ?: 10
+            val centis = match.groupValues[2].toIntOrNull() ?: 0
             val duration = centis / 100.0
 
-            // Текст между текущим и следующим тегом
+            // Текст между текущим и следующим тегом (сохраняем пробелы и форматирование)
             val textStart = match.range.last + 1
-            val nextMatch = matches.getOrNull(matches.indexOf(match) + 1)
+            val nextMatch = matches.getOrNull(index + 1)
             val textEnd = nextMatch?.range?.first ?: text.length
-            val syllableText = text.substring(textStart, textEnd).removeAssTags().trim()
+            val rawSegment = if (textStart <= textEnd) text.substring(textStart, textEnd) else ""
+            val syllableText = rawSegment.removeAssTags()
 
-            if (syllableText.isNotEmpty() || syllables.isEmpty()) {
-                val start = event.start + currentPos
-                val end = start + duration
-                syllables.add(
-                    KaraokeSyllable(
-                        text = syllableText.ifEmpty { " " },
-                        start = start,
-                        end = end,
-                        tagType = tagType,
-                        styleName = event.styleName,
-                        actor = event.actor,
-                        effect = event.effect,
-                        marginL = event.marginL,
-                        marginR = event.marginR,
-                        marginV = event.marginV
-                    )
+            val start = event.start + currentPos
+            val end = start + duration
+            syllables.add(
+                KaraokeSyllable(
+                    text = syllableText,
+                    start = start,
+                    end = end,
+                    tagType = tagType,
+                    isUnspoken = syllableText.isBlank(),
+                    styleName = event.styleName,
+                    actor = event.actor,
+                    effect = event.effect,
+                    marginL = event.marginL,
+                    marginR = event.marginR,
+                    marginV = event.marginV
                 )
-                currentPos += duration
-            }
+            )
+            currentPos += duration
         }
 
         return syllables
@@ -151,7 +153,7 @@ object AssParser {
      */
     fun serializeSyllables(syllables: List<KaraokeSyllable>): String {
         return syllables.joinToString("") { syllable ->
-            val centis = Math.round(syllable.duration * 100.0).toInt().coerceAtLeast(1)
+            val centis = Math.round(syllable.duration * 100.0).toInt().coerceAtLeast(0)
             val tag = when (syllable.tagType) {
                 KaraokeTagType.K -> "\\k"
                 KaraokeTagType.KF -> "\\kf"

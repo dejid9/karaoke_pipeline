@@ -276,6 +276,21 @@ class StudioState : ViewModel() {
                     ext in audioExtensions || ext in videoExtensions
                 }
 
+                // Отсеиваем служебные/промежуточные каталоги (MFA alignment, cache, backup)
+                val usableAssFiles = assFiles.filter { file ->
+                    val p = file.path.replace('\\', '/')
+                    !p.contains("/backup", ignoreCase = true)
+                }.ifEmpty { assFiles }
+
+                val usableMediaFiles = mediaFiles.filter { file ->
+                    val p = file.path.replace('\\', '/')
+                    !p.contains("/alignment/", ignoreCase = true) &&
+                    !p.contains("/mfa/", ignoreCase = true) &&
+                    !p.contains("/cache/", ignoreCase = true) &&
+                    !p.contains("/temp/", ignoreCase = true) &&
+                    !p.contains("/corpus/", ignoreCase = true)
+                }.ifEmpty { mediaFiles }
+
                 var projectName: String? = null
                 var mediaPathCandidate: String? = null
                 var subPathCandidate: String? = null
@@ -283,7 +298,8 @@ class StudioState : ViewModel() {
 
                 if (projectJsonFile != null && projectJsonFile.exists()) {
                     try {
-                        val json = JSONObject(projectJsonFile.readText())
+                        val rawJson = projectJsonFile.readText().removePrefix("\uFEFF")
+                        val json = JSONObject(rawJson)
                         if (json.has("name") && !json.isNull("name")) {
                             projectName = json.optString("name", null)
                         }
@@ -313,11 +329,11 @@ class StudioState : ViewModel() {
                         ?: File(projectDir, subPathCandidate).takeIf { it.exists() }
                 }
                 if (chosenAssFile == null) {
-                    chosenAssFile = assFiles.find { it.name.equals("subtitles.ass", ignoreCase = true) }
-                        ?: assFiles.firstOrNull()
+                    chosenAssFile = usableAssFiles.find { it.name.equals("subtitles.ass", ignoreCase = true) }
+                        ?: usableAssFiles.firstOrNull()
                 }
 
-                // Поиск медиа-файла
+                // Поиск медиа-файла (приоритет: project.json -> имя ass -> vocals -> первое доступное аудио)
                 var chosenMediaFile: File? = null
                 if (!mediaPathCandidate.isNullOrBlank()) {
                     val mediaName = File(mediaPathCandidate).name
@@ -325,8 +341,10 @@ class StudioState : ViewModel() {
                         ?: File(projectDir, mediaPathCandidate).takeIf { it.exists() }
                 }
                 if (chosenMediaFile == null) {
-                    chosenMediaFile = mediaFiles.find { it.extension.lowercase() in audioExtensions }
-                        ?: mediaFiles.firstOrNull()
+                    chosenMediaFile = usableMediaFiles.find { it.nameWithoutExtension.equals(chosenAssFile?.nameWithoutExtension, ignoreCase = true) }
+                        ?: usableMediaFiles.find { it.name.contains("vocal", ignoreCase = true) }
+                        ?: usableMediaFiles.find { it.extension.lowercase() in audioExtensions }
+                        ?: usableMediaFiles.firstOrNull()
                 }
 
                 if (chosenAssFile == null && chosenMediaFile == null) {
@@ -346,7 +364,8 @@ class StudioState : ViewModel() {
                 var syllables = emptyList<KaraokeSyllable>()
                 if (chosenAssFile != null && chosenAssFile.exists()) {
                     try {
-                        document = AssParser.parse(chosenAssFile.readText())
+                        val assText = chosenAssFile.readText().removePrefix("\uFEFF")
+                        document = AssParser.parse(assText)
                         syllables = document.events.flatMap { it.syllables }
                     } catch (e: Exception) {
                         // Ошибка парсинга ASS
@@ -426,8 +445,9 @@ class StudioState : ViewModel() {
         val syllables = editor.getAllSyllables()
         if (syllables.isEmpty()) return current
 
-        // Группируем слоги по строкам (упрощённо — одна строка)
-        val event = AssEvent(
+        // Сохраняем атрибуты первого события (стиль, автор, отступы и т.д.)
+        val baseEvent = current.events.firstOrNull() ?: AssEvent()
+        val event = baseEvent.copy(
             start = syllables.first().start,
             end = syllables.last().end,
             syllables = syllables,

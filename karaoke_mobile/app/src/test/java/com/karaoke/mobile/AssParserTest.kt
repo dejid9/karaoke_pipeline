@@ -75,4 +75,60 @@ class AssParserTest {
         assertEquals(parsed.events[0].start, reparsed.events[0].start, 0.001)
         assertEquals(parsed.events[0].end, reparsed.events[0].end, 0.001)
     }
+
+    @Test
+    fun testPreserveSpacesAndPauses() {
+        val original = """
+            [Script Info]
+            Title: Space and Pause Test
+            [Events]
+            Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+            Dialogue: 0,0:00:00.00,0:00:03.50,Default,,0,0,0,,{\kf100}Toda {\kf100}essa {\k50}{\kf100}loucura
+        """.trimIndent()
+
+        val doc = AssParser.parse(original)
+        val syllables = doc.events[0].syllables
+        assertEquals(4, syllables.size)
+
+        // Trailing space preserved on first syllable
+        assertEquals("Toda ", syllables[0].text)
+        assertEquals(1.0, syllables[0].duration, 0.001)
+        assertEquals(0.0, syllables[0].start, 0.001)
+        assertEquals(1.0, syllables[0].end, 0.001)
+
+        // Trailing space preserved on second syllable
+        assertEquals("essa ", syllables[1].text)
+        assertEquals(1.0, syllables[1].duration, 0.001)
+        assertEquals(1.0, syllables[1].start, 0.001)
+        assertEquals(2.0, syllables[1].end, 0.001)
+
+        // Pause tag kept as unspoken syllable
+        assertEquals("", syllables[2].text)
+        assertEquals(true, syllables[2].isUnspoken)
+        assertEquals(0.5, syllables[2].duration, 0.001)
+        assertEquals(2.0, syllables[2].start, 0.001)
+        assertEquals(2.5, syllables[2].end, 0.001)
+
+        // Final syllable starts after pause
+        assertEquals("loucura", syllables[3].text)
+        assertEquals(1.0, syllables[3].duration, 0.001)
+        assertEquals(2.5, syllables[3].start, 0.001)
+        assertEquals(3.5, syllables[3].end, 0.001)
+
+        // Roundtrip serialization preserves exact text
+        val serialized = AssParser.serializeSyllables(syllables)
+        assertEquals("{\\kf100}Toda {\\kf100}essa {\\k50}{\\kf100}loucura", serialized)
+    }
+
+    @Test
+    fun testUtf8BomAndHardLinebreaks() {
+        val withBom = "\uFEFF[Script Info]\nTitle: BOM Test\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:00.00,0:00:02.00,Default,,0,0,0,,{\\kf100}Trevor\\N{\\kf100}Eu"
+        val doc = AssParser.parse(withBom)
+        assertEquals("BOM Test", doc.title)
+        val syllables = doc.events[0].syllables
+        assertEquals(2, syllables.size)
+        assertEquals("Trevor\\N", syllables[0].text)
+        assertEquals("Eu", syllables[1].text)
+        assertEquals("Trevor ↵", syllables[0].displayText)
+    }
 }

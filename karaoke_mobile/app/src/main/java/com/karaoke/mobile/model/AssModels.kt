@@ -138,8 +138,13 @@ data class KaraokeSyllable(
 ) {
     val duration: Double get() = end - start
 
+    val displayText: String get() = when {
+        isUnspoken || text.isBlank() -> "(пауза)"
+        else -> text.replace("\\N", " ↵").replace("\\n", " ↵").replace("\\h", " ")
+    }
+
     fun toAssKaraokeTag(): String {
-        val centis = Math.round(duration * 100.0).toInt().coerceAtLeast(1)
+        val centis = Math.round(duration * 100.0).toInt().coerceAtLeast(0)
         return when (tagType) {
             KaraokeTagType.K -> "{\\k$centis}"
             KaraokeTagType.KF -> "{\\kf$centis}"
@@ -157,7 +162,8 @@ data class KaraokeSyllable(
                 else -> Color.White
             }
             withStyle(SpanStyle(color = baseColor)) {
-                append(text)
+                val clean = text.replace("\\N", "\n").replace("\\n", "\n").replace("\\h", " ")
+                append(clean.ifEmpty { if (isUnspoken) " " else "" })
             }
             romanization?.let { rom ->
                 append("\n")
