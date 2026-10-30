@@ -1118,6 +1118,10 @@ class StudioState : ViewModel() {
         addLog(LogLevel.ACTION, "Возврат к старту: ${if (enabled) "Вкл" else "Выкл"}", "Player")
     }
 
+    fun toggleReturnToStart() {
+        setReturnToStart(!_uiState.value.returnToStart)
+    }
+
     fun showSpeedDialog() {
         _uiState.value = _uiState.value.copy(showSpeedDialog = true)
     }

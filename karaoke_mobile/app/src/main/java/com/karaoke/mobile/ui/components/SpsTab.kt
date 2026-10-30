@@ -272,7 +272,7 @@ fun SpsTab(
                     onSelectSyllable = onSelectSyllable,
                     onZoomChange = onZoomChange,
                     onScrollChange = onScrollChange,
-                    onTimelineViewModeChange = onTimelineViewModeChange,
+                    onViewModeChange = onTimelineViewModeChange,
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
