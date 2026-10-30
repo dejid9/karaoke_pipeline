@@ -3,6 +3,7 @@ package com.karaoke.mobile
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -29,17 +30,39 @@ import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
+    companion object {
+        val ZIP_MIME_TYPES = arrayOf(
+            "application/zip",
+            "application/x-zip",
+            "application/x-zip-compressed",
+            "application/octet-stream",
+            "*/*"
+        )
+        val ASS_MIME_TYPES = arrayOf(
+            "text/plain",
+            "text/*",
+            "application/octet-stream",
+            "*/*"
+        )
+        val MEDIA_MIME_TYPES = arrayOf(
+            "audio/*",
+            "video/*",
+            "application/octet-stream",
+            "*/*"
+        )
+    }
+
     private val viewModel: StudioState by viewModels()
 
-    // Лаунчеры для выбора файлов
+    // Лаунчеры для выбора файлов (OpenDocument обеспечивает универсальный выбор на всех версиях Android)
     private val pickMediaLauncher = registerForActivityResult(
-        ActivityResultContracts.GetContent()
+        ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let { viewModel.setMedia(it, this) }
     }
 
     private val pickAssLauncher = registerForActivityResult(
-        ActivityResultContracts.GetContent()
+        ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let { viewModel.loadAss(it, this) }
     }
@@ -57,13 +80,13 @@ class MainActivity : ComponentActivity() {
     }
 
     private val importProjectLauncher = registerForActivityResult(
-        ActivityResultContracts.GetContent()
+        ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let { viewModel.importProject(this, it) }
     }
 
     private val importAssLauncher = registerForActivityResult(
-        ActivityResultContracts.GetContent()
+        ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let { viewModel.loadAss(it, this) }
     }
@@ -77,18 +100,19 @@ class MainActivity : ComponentActivity() {
                 viewModel.events.collect { event ->
                     when (event) {
                         is StudioEvent.ShowError -> {
-                            // Показываем через Snackbar или Toast
+                            Toast.makeText(this@MainActivity, event.message, Toast.LENGTH_LONG).show()
                         }
                         is StudioEvent.ShowSuccess -> {
-                            // Показываем через Snackbar или Toast
+                            Toast.makeText(this@MainActivity, event.message, Toast.LENGTH_SHORT).show()
                         }
                         is StudioEvent.RequestMediaPick -> {
-                            pickMediaLauncher.launch("audio/*")
+                            pickMediaLauncher.launch(MEDIA_MIME_TYPES)
                         }
                         is StudioEvent.ShareFile -> {
                             val shareIntent = Intent(Intent.ACTION_SEND).apply {
                                 type = "*/*"
                                 putExtra(Intent.EXTRA_STREAM, event.uri)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                             }
                             startActivity(Intent.createChooser(shareIntent, "Поделиться"))
                         }
@@ -118,10 +142,10 @@ class MainActivity : ComponentActivity() {
                                     // TODO: показать список проектов
                                 },
                                 onImportProject = {
-                                    importProjectLauncher.launch("application/zip")
+                                    importProjectLauncher.launch(ZIP_MIME_TYPES)
                                 },
                                 onLoadAss = {
-                                    pickAssLauncher.launch("text/plain")
+                                    pickAssLauncher.launch(ASS_MIME_TYPES)
                                 }
                             )
                         } else {
@@ -129,8 +153,8 @@ class MainActivity : ComponentActivity() {
                             StudioScreen(
                                 uiState = uiState,
                                 viewModel = viewModel,
-                                onPickMedia = { pickMediaLauncher.launch("audio/*") },
-                                onPickAss = { pickAssLauncher.launch("text/plain") }
+                                onPickMedia = { pickMediaLauncher.launch(MEDIA_MIME_TYPES) },
+                                onPickAss = { pickAssLauncher.launch(ASS_MIME_TYPES) }
                             )
                         }
 
@@ -168,11 +192,11 @@ class MainActivity : ComponentActivity() {
                                 onExportProject = {},
                                 onExportAss = {},
                                 onImportProject = {
-                                    importProjectLauncher.launch("application/zip")
+                                    importProjectLauncher.launch(ZIP_MIME_TYPES)
                                     viewModel.hideImportDialog()
                                 },
                                 onImportAss = {
-                                    importAssLauncher.launch("text/plain")
+                                    importAssLauncher.launch(ASS_MIME_TYPES)
                                     viewModel.hideImportDialog()
                                 },
                                 onDismiss = { viewModel.hideImportDialog() }

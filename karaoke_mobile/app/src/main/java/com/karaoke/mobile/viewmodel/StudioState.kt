@@ -13,6 +13,8 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
@@ -179,20 +181,7 @@ class StudioState : ViewModel() {
             try {
                 val project = _uiState.value.project ?: return@launch
                 context.contentResolver.openOutputStream(uri)?.use { output ->
-                    ZipOutputStream(output).use { zip ->
-                        // project.json
-                        zip.putNextEntry(ZipEntry("project.json"))
-                        val json = JSONObject().apply {
-                            put("id", project.id)
-                            put("name", project.name)
-                            put("mediaPath", project.mediaPath)
-                            put("subtitlePath", "subtitles.ass")
-                            put("createdAt", project.createdAt)
-                            put("modifiedAt", System.currentTimeMillis())
-                        }
-                        zip.write(json.toString().toByteArray())
-                        zip.closeEntry()
-
+                    ZipOutputStream(BufferedOutputStream(output)).use { zip ->
                         // subtitles.ass
                         val doc = rebuildDocumentFromSyllables()
                         zip.putNextEntry(ZipEntry("subtitles.ass"))
@@ -200,21 +189,43 @@ class StudioState : ViewModel() {
                         zip.closeEntry()
 
                         // media (если есть)
+                        var relMediaPath: String? = null
                         project.mediaPath?.let { mediaPath ->
                             val mediaFile = File(mediaPath)
                             if (mediaFile.exists()) {
-                                zip.putNextEntry(ZipEntry("media/${mediaFile.name}"))
+                                relMediaPath = "media/${mediaFile.name}"
+                                zip.putNextEntry(ZipEntry(relMediaPath))
                                 mediaFile.inputStream().use { it.copyTo(zip) }
                                 zip.closeEntry()
                             }
                         }
+
+                        // project.json
+                        zip.putNextEntry(ZipEntry("project.json"))
+                        val json = JSONObject().apply {
+                            put("id", project.id)
+                            put("name", project.name)
+                            if (relMediaPath != null) {
+                                put("mediaPath", relMediaPath)
+                                put("media", relMediaPath)
+                            }
+                            put("subtitlePath", "subtitles.ass")
+                            put("subtitles", "subtitles.ass")
+                            put("createdAt", project.createdAt)
+                            put("modifiedAt", System.currentTimeMillis())
+                        }
+                        zip.write(json.toString(2).toByteArray())
+                        zip.closeEntry()
                     }
                 }
                 withContext(Dispatchers.Main) {
                     _uiState.value = _uiState.value.copy(successMessage = "Проект экспортирован")
+                    _events.emit(StudioEvent.ShowSuccess("Проект экспортирован"))
                 }
             } catch (e: Exception) {
-                _events.emit(StudioEvent.ShowError("Ошибка экспорта: ${e.message}"))
+                withContext(Dispatchers.Main) {
+                    _events.emit(StudioEvent.ShowError("Ошибка экспорта: ${e.message}"))
+                }
             }
         }
     }
@@ -226,70 +237,155 @@ class StudioState : ViewModel() {
                 val projectDir = File(context.filesDir, "projects/$projectId")
                 projectDir.mkdirs()
 
-                context.contentResolver.openInputStream(uri)?.use { input ->
-                    ZipInputStream(input).use { zip ->
-                        var entry: ZipEntry?
-                        var projectJson: JSONObject? = null
+                val extractedFiles = mutableListOf<File>()
 
-                        while (zip.nextEntry.also { entry = it } != null) {
-                            val name = entry!!.name
-                            when {
-                                name == "project.json" -> {
-                                    projectJson = JSONObject(zip.bufferedReader().use { it.readText() })
+                context.contentResolver.openInputStream(uri)?.use { rawInput ->
+                    ZipInputStream(BufferedInputStream(rawInput)).use { zip ->
+                        var entry = zip.nextEntry
+                        while (entry != null) {
+                            val entryName = entry.name
+                            if (!entry.isDirectory && !entryName.startsWith("__MACOSX") && !File(entryName).name.startsWith("._")) {
+                                val cleanName = entryName.replace('\\', '/').trimStart('/')
+                                val outFile = File(projectDir, cleanName)
+                                outFile.parentFile?.mkdirs()
+                                outFile.outputStream().use { out ->
+                                    zip.copyTo(out)
                                 }
-                                name == "subtitles.ass" -> {
-                                    val outFile = File(projectDir, "subtitles.ass")
-                                    outFile.outputStream().use { zip.copyTo(it) }
-                                }
-                                name.startsWith("media/") -> {
-                                    val outFile = File(projectDir, name.substringAfter("media/"))
-                                    outFile.outputStream().use { zip.copyTo(it) }
-                                }
+                                extractedFiles.add(outFile)
                             }
                             zip.closeEntry()
+                            entry = zip.nextEntry
                         }
-
-                        projectJson?.let { json ->
-                            val project = KaraokeProject(
-                                id = json.getString("id"),
-                                name = json.getString("name"),
-                                mediaPath = json.optString("mediaPath", null)?.let {
-                                    File(projectDir, it).absolutePath
-                                },
-                                subtitlePath = File(projectDir, "subtitles.ass").absolutePath,
-                                createdAt = json.getLong("createdAt"),
-                                modifiedAt = System.currentTimeMillis()
-                            )
-
-                            var document = AssDocument()
-                            var syllables = emptyList<KaraokeSyllable>()
-                            project.subtitlePath?.let { path ->
-                                val file = File(path)
-                                if (file.exists()) {
-                                    document = AssParser.parse(file.readText())
-                                    syllables = document.events.flatMap { it.syllables }
-                                }
-                            }
-                            editor = AssEditor(syllables)
-
-                            saveProjectToDisk(project, context)
-
-                            withContext(Dispatchers.Main) {
-                                _uiState.value = _uiState.value.copy(
-                                    project = project,
-                                    document = document,
-                                    syllables = syllables,
-                                    selectedIds = emptySet(),
-                                    canUndo = editor.canUndo,
-                                    canRedo = editor.canRedo,
-                                    successMessage = "Проект создан"
-                                )
-                            }
-                        } ?: _events.emit(StudioEvent.ShowError("Некорректный файл проекта"))
                     }
                 }
+
+                if (extractedFiles.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        _events.emit(StudioEvent.ShowError("Архив пуст или не удалось прочитать zip"))
+                    }
+                    return@launch
+                }
+
+                val audioExtensions = setOf("mp3", "wav", "ogg", "flac", "m4a", "aac", "opus")
+                val videoExtensions = setOf("mp4", "mkv", "webm", "avi", "mov")
+
+                val projectJsonFile = extractedFiles.find { it.name.equals("project.json", ignoreCase = true) }
+                val assFiles = extractedFiles.filter { it.extension.equals("ass", ignoreCase = true) }
+                val mediaFiles = extractedFiles.filter {
+                    val ext = it.extension.lowercase()
+                    ext in audioExtensions || ext in videoExtensions
+                }
+
+                var projectName: String? = null
+                var mediaPathCandidate: String? = null
+                var subPathCandidate: String? = null
+                var createdAt = System.currentTimeMillis()
+
+                if (projectJsonFile != null && projectJsonFile.exists()) {
+                    try {
+                        val json = JSONObject(projectJsonFile.readText())
+                        if (json.has("name") && !json.isNull("name")) {
+                            projectName = json.optString("name", null)
+                        }
+                        if (json.has("mediaPath") && !json.isNull("mediaPath")) {
+                            mediaPathCandidate = json.optString("mediaPath", null)
+                        } else if (json.has("media") && !json.isNull("media")) {
+                            mediaPathCandidate = json.optString("media", null)
+                        }
+                        if (json.has("subtitlePath") && !json.isNull("subtitlePath")) {
+                            subPathCandidate = json.optString("subtitlePath", null)
+                        } else if (json.has("subtitles") && !json.isNull("subtitles")) {
+                            subPathCandidate = json.optString("subtitles", null)
+                        }
+                        if (json.has("createdAt") && !json.isNull("createdAt")) {
+                            createdAt = json.optLong("createdAt", createdAt)
+                        }
+                    } catch (e: Exception) {
+                        // Игнорируем ошибки парсинга json и используем файлы напрямую
+                    }
+                }
+
+                // Поиск файла субтитров .ass
+                var chosenAssFile: File? = null
+                if (!subPathCandidate.isNullOrBlank()) {
+                    val subName = File(subPathCandidate).name
+                    chosenAssFile = extractedFiles.find { it.name.equals(subName, ignoreCase = true) }
+                        ?: File(projectDir, subPathCandidate).takeIf { it.exists() }
+                }
+                if (chosenAssFile == null) {
+                    chosenAssFile = assFiles.find { it.name.equals("subtitles.ass", ignoreCase = true) }
+                        ?: assFiles.firstOrNull()
+                }
+
+                // Поиск медиа-файла
+                var chosenMediaFile: File? = null
+                if (!mediaPathCandidate.isNullOrBlank()) {
+                    val mediaName = File(mediaPathCandidate).name
+                    chosenMediaFile = extractedFiles.find { it.name.equals(mediaName, ignoreCase = true) }
+                        ?: File(projectDir, mediaPathCandidate).takeIf { it.exists() }
+                }
+                if (chosenMediaFile == null) {
+                    chosenMediaFile = mediaFiles.find { it.extension.lowercase() in audioExtensions }
+                        ?: mediaFiles.firstOrNull()
+                }
+
+                if (chosenAssFile == null && chosenMediaFile == null) {
+                    withContext(Dispatchers.Main) {
+                        _events.emit(StudioEvent.ShowError("В архиве не найдены файлы караоке (.ass) или аудио"))
+                    }
+                    return@launch
+                }
+
+                if (projectName.isNullOrBlank()) {
+                    projectName = chosenAssFile?.nameWithoutExtension
+                        ?: chosenMediaFile?.nameWithoutExtension
+                        ?: "Импортированный проект"
+                }
+
+                var document = AssDocument()
+                var syllables = emptyList<KaraokeSyllable>()
+                if (chosenAssFile != null && chosenAssFile.exists()) {
+                    try {
+                        document = AssParser.parse(chosenAssFile.readText())
+                        syllables = document.events.flatMap { it.syllables }
+                    } catch (e: Exception) {
+                        // Ошибка парсинга ASS
+                    }
+                }
+                editor = AssEditor(syllables)
+
+                val project = KaraokeProject(
+                    id = projectId,
+                    name = projectName,
+                    mediaPath = chosenMediaFile?.absolutePath,
+                    subtitlePath = chosenAssFile?.absolutePath,
+                    document = document,
+                    createdAt = createdAt,
+                    modifiedAt = System.currentTimeMillis()
+                )
+
+                saveProjectToDisk(project, context)
+
+                withContext(Dispatchers.Main) {
+                    if (chosenMediaFile != null && chosenMediaFile.exists()) {
+                        setMediaFile(chosenMediaFile)
+                    }
+                    _uiState.value = _uiState.value.copy(
+                        project = project,
+                        document = document,
+                        syllables = syllables,
+                        selectedIds = emptySet(),
+                        activeSyllableId = null,
+                        canUndo = editor.canUndo,
+                        canRedo = editor.canRedo,
+                        successMessage = "Проект «${project.name}» загружен"
+                    )
+                    _events.emit(StudioEvent.ShowSuccess("Проект «${project.name}» импортирован"))
+                }
             } catch (e: Exception) {
-                _events.emit(StudioEvent.ShowError("Ошибка импорта: ${e.message}"))
+                withContext(Dispatchers.Main) {
+                    _events.emit(StudioEvent.ShowError("Ошибка импорта: ${e.message ?: e.toString()}"))
+                }
             }
         }
     }
@@ -556,18 +652,44 @@ class StudioState : ViewModel() {
 
     // --- Плеер ---
 
-    fun setMedia(uri: Uri, context: Context) {
-        mediaPlayer?.release()
-        mediaPlayer = android.media.MediaPlayer().apply {
-            setDataSource(context, uri)
-            prepare()
-            setOnCompletionListener {
-                _uiState.value = _uiState.value.copy(isPlaying = false, playbackPosition = 0.0)
+    fun setMediaFile(file: File) {
+        try {
+            mediaPlayer?.release()
+            mediaPlayer = android.media.MediaPlayer().apply {
+                setDataSource(file.absolutePath)
+                prepare()
+                setOnCompletionListener {
+                    _uiState.value = _uiState.value.copy(isPlaying = false, playbackPosition = 0.0)
+                }
+            }
+            _uiState.value = _uiState.value.copy(
+                mediaDuration = mediaPlayer?.duration?.toDouble()?.div(1000.0) ?: 0.0
+            )
+        } catch (e: Exception) {
+            viewModelScope.launch {
+                _events.emit(StudioEvent.ShowError("Не удалось инициализировать аудио: ${e.message}"))
             }
         }
-        _uiState.value = _uiState.value.copy(
-            mediaDuration = mediaPlayer?.duration?.toDouble()?.div(1000.0) ?: 0.0
-        )
+    }
+
+    fun setMedia(uri: Uri, context: Context) {
+        try {
+            mediaPlayer?.release()
+            mediaPlayer = android.media.MediaPlayer().apply {
+                setDataSource(context, uri)
+                prepare()
+                setOnCompletionListener {
+                    _uiState.value = _uiState.value.copy(isPlaying = false, playbackPosition = 0.0)
+                }
+            }
+            _uiState.value = _uiState.value.copy(
+                mediaDuration = mediaPlayer?.duration?.toDouble()?.div(1000.0) ?: 0.0
+            )
+        } catch (e: Exception) {
+            viewModelScope.launch {
+                _events.emit(StudioEvent.ShowError("Не удалось открыть медиа: ${e.message}"))
+            }
+        }
     }
 
     fun togglePlayback() {
