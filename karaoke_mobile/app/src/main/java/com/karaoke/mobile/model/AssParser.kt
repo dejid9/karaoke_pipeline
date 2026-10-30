@@ -71,10 +71,12 @@ object AssParser {
         val afterPrefix = line.substringAfter("Dialogue:")
         val parts = afterPrefix.split(",", limit = 10)
         val text = parts.getOrNull(9)?.trim() ?: ""
+        val start = parseTime(parts.getOrNull(1)?.trim() ?: "0:00:00.00")
+        val end = parseTime(parts.getOrNull(2)?.trim() ?: "0:00:00.00")
         return AssLine(
             layer = parts.getOrNull(0)?.trim()?.toIntOrNull() ?: 0,
-            start = parseTime(parts.getOrNull(1)?.trim() ?: "0:00:00.00"),
-            end = parseTime(parts.getOrNull(2)?.trim() ?: "0:00:00.00"),
+            start = start,
+            end = end,
             style = parts.getOrNull(3)?.trim() ?: "Default",
             actor = parts.getOrNull(4)?.trim() ?: "",
             marginL = parts.getOrNull(5)?.trim()?.toIntOrNull() ?: 0,
@@ -82,43 +84,46 @@ object AssParser {
             marginV = parts.getOrNull(7)?.trim()?.toIntOrNull() ?: 0,
             effect = parts.getOrNull(8)?.trim() ?: "",
             text = text,
-            syllables = parseSyllables(text)
+            syllables = parseSyllables(text, start, end)
         )
     }
 
-    private fun parseSyllables(text: String): List<Syllable> {
+    private fun parseSyllables(text: String, lineStart: Long = 0L, lineEnd: Long = 0L): List<Syllable> {
         val result = mutableListOf<Syllable>()
-        val regex = """\\(k[fKoK]?(\d+)\\)""".toRegex()
-        var currentPos = 0L
-        var lastIndex = 0
+        val regex = """\{[\\/]+(k[fFoO]?|[Kk])(\d+)\}([^{]*)""".toRegex()
+        var currentPos = lineStart
 
-        for (match in regex.findAll(text)) {
-            val plainText = text.substring(lastIndex, match.range.first)
-            if (plainText.isNotEmpty()) {
-                val duration = match.groupValues[1].toLong() * 10
-                val tag = when (match.groupValues[0].substring(1, match.groupValues[0].indexOf(')'))) {
-                    "kf" -> KaraokeTag.KF
-                    "ko" -> KaraokeTag.KO
-                    "K" -> KaraokeTag.K_CAPITAL
-                    else -> KaraokeTag.K
-                }
-                result.add(Syllable(
-                    text = plainText,
-                    start = currentPos,
-                    end = currentPos + duration,
-                    tag = tag
-                ))
-                currentPos += duration
+        val matches = regex.findAll(text).toList()
+        if (matches.isEmpty()) {
+            if (text.isNotEmpty()) {
+                val end = if (lineEnd > lineStart) lineEnd else lineStart + 1000L
+                result.add(Syllable(text = text, start = lineStart, end = end))
             }
-            lastIndex = match.range.last + 1
+            return result
         }
 
-        val remaining = text.substring(lastIndex)
-        if (remaining.isNotEmpty() && result.isNotEmpty()) {
-            val last = result.last()
-            result[result.size - 1] = last.copy(text = last.text + remaining)
-        } else if (remaining.isNotEmpty()) {
-            result.add(Syllable(text = remaining, start = 0, end = 1000))
+        for (match in matches) {
+            val tagStr = match.groupValues[1]
+            val durationCs = match.groupValues[2].toLongOrNull() ?: 0L
+            val sylText = match.groupValues[3]
+            val durationMs = durationCs * 10L
+
+            val tag = when (tagStr.lowercase()) {
+                "kf" -> KaraokeTag.KF
+                "ko" -> KaraokeTag.KO
+                "k" -> if (tagStr == "K") KaraokeTag.K_CAPITAL else KaraokeTag.K
+                else -> KaraokeTag.K
+            }
+
+            result.add(
+                Syllable(
+                    text = sylText,
+                    start = currentPos,
+                    end = currentPos + durationMs,
+                    tag = tag
+                )
+            )
+            currentPos += durationMs
         }
 
         return result
