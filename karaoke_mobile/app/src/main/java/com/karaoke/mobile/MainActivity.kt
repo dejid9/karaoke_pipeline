@@ -32,9 +32,7 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -54,27 +52,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.karaoke.mobile.model.AssLine
-import com.karaoke.mobile.model.Syllable
-import com.karaoke.mobile.model.formatTime
 import com.karaoke.mobile.ui.components.EmptyState
 import com.karaoke.mobile.ui.components.FilesTab
 import com.karaoke.mobile.ui.components.InspectorPane
 import com.karaoke.mobile.ui.components.SyllablesTab
 import com.karaoke.mobile.ui.components.TimelinePane
-import com.karaoke.mobile.ui.theme.KaraokeAccent
 import com.karaoke.mobile.ui.theme.KaraokeDark
 import com.karaoke.mobile.ui.theme.KaraokeMobileTheme
 import com.karaoke.mobile.ui.theme.KaraokeOnSurface
 import com.karaoke.mobile.ui.theme.KaraokeOnSurfaceVariant
 import com.karaoke.mobile.ui.theme.KaraokePrimary
-import com.karaoke.mobile.ui.theme.KaraokeSecondary
 import com.karaoke.mobile.ui.theme.KaraokeSurface
 import com.karaoke.mobile.viewmodel.StudioState
 

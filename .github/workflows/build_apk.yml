@@ -55,6 +55,7 @@ jobs:
 
       - name: Assemble debug APK
         run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
+        if: always() || success()
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
