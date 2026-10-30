@@ -12,7 +12,7 @@ from karaoke_core.editor import (
     KaraokeEditResult, colour_burst, delete_syllable, insert_after, insert_after_at_time, merge_syllables,
     redistribute_boundary, set_syllable_contents, set_syllable_romanization,
     set_syllable_text, set_syllable_texts, set_syllable_visible_texts,
-    set_tag_type, uncolour_burst,
+    set_syllable_timing, set_tag_type, uncolour_burst,
     split_syllable, split_syllable_at_raw_offset, split_syllable_at_time,
 )
 from karaoke_core.project import ProjectConfig, create_project, find_portable_ffmpeg, load_project, save_project
@@ -580,6 +580,13 @@ class KaraokeSession:
             lambda doc: split_syllable_at_raw_offset(
                 doc, syllable_id, raw_offset, raw_text=raw_text, new_type=new_type, boundary_time=boundary_time
             ),
+            invalidate_measurements=True,
+        )
+
+    def set_syllable_timing(self, syllable_id: str, new_start: float, new_end: float) -> KaraokeEditResult:
+        from karaoke_core.editor import set_syllable_timing
+        return self._apply_document_edit(
+            lambda doc: set_syllable_timing(doc, syllable_id, new_start, new_end),
             invalidate_measurements=True,
         )
 

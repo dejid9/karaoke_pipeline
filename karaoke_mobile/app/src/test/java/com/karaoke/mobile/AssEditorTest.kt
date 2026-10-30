@@ -1,95 +1,120 @@
 package com.karaoke.mobile
 
 import com.karaoke.mobile.model.AssEditor
-import com.karaoke.mobile.model.AssFile
-import com.karaoke.mobile.model.AssLine
-import com.karaoke.mobile.model.AssParser
-import com.karaoke.mobile.model.KaraokeTag
-import com.karaoke.mobile.model.Syllable
-import org.junit.Assert.*
+import com.karaoke.mobile.model.KaraokeSyllable
+import com.karaoke.mobile.model.KaraokeTagType
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AssEditorTest {
-    private val sampleAss = """
-        [Script Info]
-        Title: Demo
-
-        [Events]
-        Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-        Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,{\k40}Hello{\kf60}world
-    """.trimIndent()
+    private fun createSampleSyllables(): List<KaraokeSyllable> = listOf(
+        KaraokeSyllable(
+            id = "syl-1",
+            text = "Hello",
+            start = 1.0,
+            end = 1.4,
+            tagType = KaraokeTagType.K
+        ),
+        KaraokeSyllable(
+            id = "syl-2",
+            text = "world",
+            start = 1.4,
+            end = 2.0,
+            tagType = KaraokeTagType.KF
+        )
+    )
 
     @Test
     fun testInitialState() {
-        val file = AssParser.parse(sampleAss)
-        val editor = AssEditor(file)
-        assertEquals(1, editor.current.lines.size)
-        assertEquals(2, editor.current.lines[0].syllables.size)
-        assertFalse(editor.canUndo())
-        assertFalse(editor.canRedo())
+        val syllables = createSampleSyllables()
+        val editor = AssEditor(syllables)
+        assertEquals(2, editor.syllables.size)
+        assertFalse(editor.canUndo)
+        assertFalse(editor.canRedo)
     }
 
     @Test
     fun testUndoRedo() {
-        val file = AssParser.parse(sampleAss)
-        val editor = AssEditor(file)
+        val editor = AssEditor(createSampleSyllables())
 
-        editor.setSyllableText(0, 0, "Hi")
-        assertEquals("Hi", editor.current.lines[0].syllables[0].text)
-        assertTrue(editor.canUndo())
-        assertFalse(editor.canRedo())
+        val res = editor.setText("syl-1", "Hi")
+        assertTrue(res.success)
+        assertEquals("Hi", editor.syllables[0].text)
+        assertTrue(editor.canUndo)
+        assertFalse(editor.canRedo)
 
         editor.undo()
-        assertEquals("Hello", editor.current.lines[0].syllables[0].text)
-        assertFalse(editor.canUndo())
-        assertTrue(editor.canRedo())
+        assertEquals("Hello", editor.syllables[0].text)
+        assertFalse(editor.canUndo)
+        assertTrue(editor.canRedo)
 
         editor.redo()
-        assertEquals("Hi", editor.current.lines[0].syllables[0].text)
-        assertTrue(editor.canUndo())
-        assertFalse(editor.canRedo())
+        assertEquals("Hi", editor.syllables[0].text)
+        assertTrue(editor.canUndo)
+        assertFalse(editor.canRedo)
     }
 
     @Test
     fun testSplitAndMergeSyllables() {
-        val file = AssParser.parse(sampleAss)
-        val editor = AssEditor(file)
-        val syl = editor.current.lines[0].syllables[0]
-        val mid = (syl.start + syl.end) / 2
+        val editor = AssEditor(createSampleSyllables())
+        val initialId = editor.syllables[0].id
 
-        editor.splitSyllable(0, 0, mid)
-        assertEquals(3, editor.current.lines[0].syllables.size)
-        assertEquals(mid, editor.current.lines[0].syllables[0].end)
-        assertEquals(mid, editor.current.lines[0].syllables[1].start)
+        val splitRes = editor.splitSyllable(initialId, 0.5)
+        assertTrue(splitRes.success)
+        assertEquals(3, editor.syllables.size)
+        assertEquals(1.0, editor.syllables[0].start, 0.001)
+        assertEquals(1.2, editor.syllables[0].end, 0.001)
+        assertEquals(1.2, editor.syllables[1].start, 0.001)
+        assertEquals(1.4, editor.syllables[1].end, 0.001)
 
-        editor.mergeSyllables(0, 0, 1)
-        assertEquals(2, editor.current.lines[0].syllables.size)
+        val idsToMerge = listOf(editor.syllables[0].id, editor.syllables[1].id)
+        val mergeRes = editor.mergeSyllables(idsToMerge)
+        assertTrue(mergeRes.success)
+        assertEquals(2, editor.syllables.size)
+        assertEquals(1.0, editor.syllables[0].start, 0.001)
+        assertEquals(1.4, editor.syllables[0].end, 0.001)
     }
 
     @Test
-    fun testToggleBurst() {
-        val file = AssParser.parse(sampleAss)
-        val editor = AssEditor(file)
-        assertFalse(editor.current.lines[0].syllables[0].isBurst)
+    fun testDeleteSyllable() {
+        val editor = AssEditor(createSampleSyllables())
+        assertEquals(2, editor.syllables.size)
 
-        editor.toggleSyllableBurst(0, 0)
-        assertTrue(editor.current.lines[0].syllables[0].isBurst)
+        editor.deleteSyllable("syl-1")
+        assertEquals(1, editor.syllables.size)
+        assertEquals("world", editor.syllables[0].text)
 
-        editor.toggleSyllableBurst(0, 0)
-        assertFalse(editor.current.lines[0].syllables[0].isBurst)
+        editor.undo()
+        assertEquals(2, editor.syllables.size)
+        assertEquals("Hello", editor.syllables[0].text)
     }
 
     @Test
-    fun testLineOperations() {
-        val file = AssParser.parse(sampleAss)
-        val editor = AssEditor(file)
-        val newLine = AssLine(start = 2000, end = 3000, text = "Second line")
+    fun testTagTypeAndTiming() {
+        val editor = AssEditor(createSampleSyllables())
+        editor.setTagType(listOf("syl-1"), KaraokeTagType.KO)
+        assertEquals(KaraokeTagType.KO, editor.syllables[0].tagType)
 
-        editor.insertLine(1, newLine)
-        assertEquals(2, editor.current.lines.size)
+        editor.setTiming("syl-1", 0.8, 1.3)
+        assertEquals(0.8, editor.syllables[0].start, 0.001)
+        assertEquals(1.3, editor.syllables[0].end, 0.001)
 
-        editor.deleteLine(0)
-        assertEquals(1, editor.current.lines.size)
-        assertEquals("Second line", editor.current.lines[0].text)
+        editor.undo()
+        assertEquals(1.0, editor.syllables[0].start, 0.001)
+        assertEquals(1.4, editor.syllables[0].end, 0.001)
+    }
+
+    @Test
+    fun testToggleUnspoken() {
+        val editor = AssEditor(createSampleSyllables())
+        assertFalse(editor.syllables[0].isUnspoken)
+
+        editor.toggleUnspoken(listOf("syl-1"))
+        assertTrue(editor.syllables[0].isUnspoken)
+
+        editor.toggleUnspoken(listOf("syl-1"))
+        assertFalse(editor.syllables[0].isUnspoken)
     }
 }

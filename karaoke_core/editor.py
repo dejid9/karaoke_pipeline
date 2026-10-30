@@ -804,6 +804,71 @@ def adjust_id_references_after_track0_insert(document: AssDocument, inserted_tra
             event.commit()
 
 
+def set_syllable_timing(
+    document: AssDocument,
+    syllable_id: str,
+    new_start: float,
+    new_end: float,
+) -> KaraokeEditResult:
+    """Adjust a single syllable's timing by rewriting its karaoke duration.
+
+    The syllable must stay inside its parent ASS event; neighbouring syllables
+    in the same event are shifted to preserve the event's total duration and
+    the relative timing of syllables outside the edited span.
+    """
+    s = _selected(document, [syllable_id])[0]
+    event = _event_for_line(document, s.event_line_index)
+    all_syllables = document.karaoke_syllables()
+    event_syllables = [k for k in all_syllables if k.event_line_index == s.event_line_index]
+    if not event_syllables:
+        raise KaraokeEditError("No karaoke syllables found in parent event")
+
+    # Compute new duration in centiseconds (ASS precision)
+    new_duration_cs = max(1, int(round((new_end - new_start) * 100.0)))
+    old_duration_cs = s.duration_cs
+    delta_cs = new_duration_cs - old_duration_cs
+
+    # Rebuild karaoke tags for all syllables in this event
+    replacements: list[tuple[int, int, str]] = []
+    cumulative_time = event.start
+    for idx, k in enumerate(event_syllables):
+        if k.id == s.id:
+            dur_cs = new_duration_cs
+            # If start shifted, we absorb the shift into the *previous* syllable's
+            # duration when possible, otherwise into this syllable's start offset.
+            start_shift_cs = int(round((new_start - k.start) * 100.0))
+            if start_shift_cs != 0 and idx > 0:
+                # Adjust previous syllable duration to absorb the shift
+                prev = event_syllables[idx - 1]
+                prev_new_dur = max(1, prev.duration_cs + start_shift_cs)
+                # Update previous replacement if it exists
+                for i, (start, end, repl) in enumerate(replacements):
+                    if start == prev.tag_value_start:
+                        replacements[i] = (
+                            start,
+                            end,
+                            _karaoke_replacement(prev, duration_cs=prev_new_dur),
+                        )
+                        break
+                # Compensate delta so this syllable gets correct final duration
+                dur_cs = max(1, new_duration_cs - start_shift_cs)
+            cumulative_time = new_start
+        else:
+            dur_cs = k.duration_cs
+            if k.start > s.start and delta_cs != 0:
+                # Shift later syllables by adjusting the one immediately after
+                dur_cs = max(1, dur_cs + delta_cs)
+                delta_cs = 0  # Only apply once
+        replacements.append(
+            (k.tag_value_start, k.tag_value_end, _karaoke_replacement(k, duration_cs=dur_cs))
+        )
+        cumulative_time += dur_cs / 100.0
+
+    event.text = _apply_replacements(event.text, replacements)
+    event.commit()
+    return KaraokeEditResult("timing", (s.id,), new_start)
+
+
 def delete_syllable(document: AssDocument, syllable_id: str) -> KaraokeEditResult:
     item = _selected(document, [syllable_id])[0]
     track0_before = [s for s in document.karaoke_syllables() if getattr(s, "track", 0) == 0]

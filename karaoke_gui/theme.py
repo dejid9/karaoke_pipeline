@@ -35,6 +35,8 @@ class ThemePalette:
     warning: str
     danger: str
     accent_fg: str = "#ffffff"
+    tooltip_bg: str = "#ffffcc"
+    tooltip_fg: str = "#000000"
 
     @property
     def is_dark(self) -> bool:
@@ -47,7 +49,7 @@ def _light(name: str, family: str, accent: str, accent_alt: str, *, bg="#f5f7fa"
         bg=bg, panel=panel, raised=raised, input_bg=input_bg or panel, fg=fg, muted=muted,
         border=border, canvas=canvas, canvas_alt=canvas_alt, grid=grid,
         selection=selection or accent_alt, success="#2f8a52", warning="#a56c00", danger="#b83f48",
-        accent_fg=accent_fg,
+        accent_fg=accent_fg, tooltip_bg="#ffffcc", tooltip_fg="#000000",
     )
 
 
@@ -57,7 +59,7 @@ def _night(name: str, family: str, accent: str, accent_alt: str, *, bg="#11161d"
         bg=bg, panel=panel, raised=raised, input_bg=input_bg or panel, fg=fg, muted=muted,
         border=border, canvas=canvas, canvas_alt=canvas_alt, grid=grid,
         selection=selection or accent_alt, success="#72d19a", warning="#e6bd5b", danger="#ff747e",
-        accent_fg=accent_fg,
+        accent_fg=accent_fg, tooltip_bg="#2a2a1a", tooltip_fg="#e0e0c0",
     )
 
 

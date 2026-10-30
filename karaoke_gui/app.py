@@ -1420,6 +1420,8 @@ class KaraokeApp(tk.Tk):
             on_activate=self._karaoke_timeline_activated,
             on_seek=self._playback_seek_requested,
         )
+        self.karaoke_timeline.on_syllable_resize = self._karaoke_syllable_resized
+        self.karaoke_timeline.on_syllable_move = self._karaoke_syllable_moved
         self.karaoke_timeline.on_add_track = self._handle_add_track
         self.karaoke_timeline.on_move_track = self._handle_move_track
         self.karaoke_timeline.on_delete_track = self._handle_delete_track
@@ -3243,8 +3245,111 @@ class KaraokeApp(tk.Tk):
             return "break"
         return None
 
-    def _karaoke_timeline_activated(self, _syllable_id: str) -> None:
+    def _karaoke_timeline_activated(self, syllable_id: str) -> None:
+        # Handle context-menu actions from timeline
+        if syllable_id.startswith("__split__:"):
+            target = syllable_id.split(":", 2)[2]
+            self._timeline_context_split(target)
+            return
+        if syllable_id.startswith("__delete__:"):
+            target = syllable_id.split(":", 2)[2]
+            self._timeline_context_delete(target)
+            return
+        if syllable_id.startswith("__insert__:"):
+            target = syllable_id.split(":", 2)[2]
+            self._timeline_context_insert(target)
+            return
+        if syllable_id.startswith("__merge_prev__:"):
+            target = syllable_id.split(":", 2)[2]
+            self._timeline_context_merge_prev(target)
+            return
+        if syllable_id.startswith("__merge_next__:"):
+            target = syllable_id.split(":", 2)[2]
+            self._timeline_context_merge_next(target)
+            return
         self.after_idle(self.focus_karaoke_text_editor)
+
+    def _timeline_context_split(self, sid: str) -> None:
+        if not self._commit_text_drafts(preserve_selection={sid}):
+            return
+        index = next((i for i, item in enumerate(self.session.syllables) if item.id == sid), None)
+        if index is None:
+            return
+        s = self.session.syllables[index]
+        mid = (s.start + s.end) / 2.0
+        self._run_karaoke_edit(
+            lambda: self.session.edit_split_at_time(sid, mid),
+            "Слог разделён на таймлайне",
+        )
+
+    def _timeline_context_delete(self, sid: str) -> None:
+        if not self._commit_text_drafts(preserve_selection=set()):
+            return
+        self._run_karaoke_edit(
+            lambda: self.session.edit_delete(sid),
+            "Слог удалён с таймлайна",
+        )
+
+    def _timeline_context_insert(self, sid: str) -> None:
+        if not self._commit_text_drafts(preserve_selection={sid}):
+            return
+        self._run_karaoke_edit(
+            lambda: self.session.edit_insert(sid),
+            "Слог вставлен после на таймлайне",
+        )
+
+    def _timeline_context_merge_prev(self, sid: str) -> None:
+        if not self._commit_text_drafts(preserve_selection=set()):
+            return
+        ids = [s.id for s in self.session.syllables]
+        if sid not in ids:
+            return
+        idx = ids.index(sid)
+        if idx <= 0:
+            self._set_status("Нет предыдущего слога для объединения")
+            return
+        prev_id = ids[idx - 1]
+        self._run_karaoke_edit(
+            lambda: self.session.edit_merge((prev_id, sid)),
+            "Слоги объединены на таймлайне",
+        )
+
+    def _timeline_context_merge_next(self, sid: str) -> None:
+        if not self._commit_text_drafts(preserve_selection=set()):
+            return
+        ids = [s.id for s in self.session.syllables]
+        if sid not in ids:
+            return
+        idx = ids.index(sid)
+        if idx + 1 >= len(ids):
+            self._set_status("Нет следующего слога для объединения")
+            return
+        next_id = ids[idx + 1]
+        self._run_karaoke_edit(
+            lambda: self.session.edit_merge((sid, next_id)),
+            "Слоги объединены на таймлайне",
+        )
+
+    def _karaoke_syllable_resized(self, sid: str, new_start: float, new_end: float) -> None:
+        if not self._commit_text_drafts(preserve_selection={sid}):
+            return
+        self._run_karaoke_edit(
+            lambda: self.session.set_syllable_timing(sid, new_start, new_end),
+            f"Тайминг слога изменён: {format_clock(new_start)} – {format_clock(new_end)}",
+        )
+
+    def _karaoke_syllable_moved(self, sid: str, new_start: float) -> None:
+        if not self._commit_text_drafts(preserve_selection={sid}):
+            return
+        s = next((item for item in self.session.syllables if item.id == sid), None)
+        if s is None:
+            return
+        duration = s.end - s.start
+        new_end = new_start + duration
+        self._run_karaoke_edit(
+            lambda: self.session.set_syllable_timing(sid, new_start, new_end),
+            f"Слог перемещён: {format_clock(new_start)} – {format_clock(new_end)}",
+        )
 
     def _commit_text_drafts(self, *, exclude: set[str] | None = None, preserve_selection=None) -> bool:
         self._remember_current_karaoke_draft()

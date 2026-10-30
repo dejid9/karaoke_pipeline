@@ -1,196 +1,218 @@
 package com.karaoke.mobile.model
 
+/**
+ * Парсер и сериализатор ASS-файлов.
+ * Портирован из karaoke_core/ass.py
+ */
 object AssParser {
-    fun parse(content: String): AssFile {
-        val lines = content.lines()
-        var section = ""
-        val scriptInfo = mutableMapOf<String, String>()
+
+    fun parse(text: String): AssDocument {
+        val lines = text.lines()
+        var section: String? = null
+        var title = ""
+        var scriptType = "v4.00+"
+        var playResX = 1280
+        var playResY = 720
         val styles = mutableListOf<AssStyle>()
-        val assLines = mutableListOf<AssLine>()
-        var audioFile: String? = null
-        var videoFile: String? = null
+        val events = mutableListOf<AssEvent>()
+        val extraHeaders = mutableMapOf<String, String>()
 
         for (rawLine in lines) {
             val line = rawLine.trim()
-            when {
-                line.startsWith("[") && line.endsWith("]") -> section = line
-                section == "[Script Info]" && line.contains(":") -> {
-                    val (key, value) = line.split(":", limit = 2).map { it.trim() }
-                    scriptInfo[key] = value
-                    if (key.equals("Audio File", ignoreCase = true)) audioFile = value
-                    if (key.equals("Video File", ignoreCase = true)) videoFile = value
+            if (line.isEmpty() || line.startsWith(";")) continue
+
+            if (line.startsWith("[") && line.endsWith("]")) {
+                section = line
+                continue
+            }
+
+            when (section) {
+                "[Script Info]" -> {
+                    if (line.contains(":")) {
+                        val key = line.substringBefore(":").trim()
+                        val value = line.substringAfter(":").trim()
+                        when (key.lowercase()) {
+                            "title" -> title = value
+                            "scripttype" -> scriptType = value
+                            "playresx" -> playResX = value.toIntOrNull() ?: 1280
+                            "playresy" -> playResY = value.toIntOrNull() ?: 720
+                            else -> extraHeaders[key] = value
+                        }
+                    }
                 }
-                section == "[V4+ Styles]" && line.startsWith("Style:") -> {
-                    styles.add(parseStyle(line))
+                "[V4+ Styles]", "[V4 Styles]" -> {
+                    if (line.startsWith("Style:", ignoreCase = true)) {
+                        styles.add(AssStyle.fromAssFormat(line))
+                    }
                 }
-                section == "[Events]" && line.startsWith("Dialogue:") -> {
-                    assLines.add(parseDialogue(line))
+                "[Events]" -> {
+                    if (line.startsWith("Dialogue:", ignoreCase = true)) {
+                        val event = AssEvent.fromAssLine(line)
+                        events.add(event.copy(syllables = parseKaraokeSyllables(event)))
+                    } else if (line.startsWith("Comment:", ignoreCase = true)) {
+                        // Пропускаем комментарии или можно сохранить
+                    }
                 }
             }
         }
 
-        return AssFile(
-            scriptInfo = scriptInfo,
+        if (styles.isEmpty()) {
+            styles.add(AssStyle())
+        }
+
+        return AssDocument(
+            title = title,
+            scriptType = scriptType,
+            playResX = playResX,
+            playResY = playResY,
             styles = styles,
-            lines = assLines,
-            audioFile = audioFile,
-            videoFile = videoFile
+            events = events,
+            extraHeaders = extraHeaders
         )
     }
 
-    private fun parseStyle(line: String): AssStyle {
-        val parts = line.substringAfter("Style:").trim().split(",")
-        return AssStyle(
-            name = parts.getOrNull(0)?.trim() ?: "Default",
-            fontName = parts.getOrNull(1)?.trim() ?: "Arial",
-            fontSize = parts.getOrNull(2)?.trim()?.toIntOrNull() ?: 24,
-            primaryColor = parseAssColor(parts.getOrNull(3) ?: "&H00FFFFFF"),
-            secondaryColor = parseAssColor(parts.getOrNull(4) ?: "&H000000FF"),
-            outlineColor = parseAssColor(parts.getOrNull(5) ?: "&H00000000"),
-            backColor = parseAssColor(parts.getOrNull(6) ?: "&H00000000"),
-            bold = (parts.getOrNull(7)?.trim()?.toIntOrNull() ?: 0) == -1,
-            italic = (parts.getOrNull(8)?.trim()?.toIntOrNull() ?: 0) == -1,
-            underline = (parts.getOrNull(10)?.trim()?.toIntOrNull() ?: 0) == -1,
-            strikeOut = (parts.getOrNull(11)?.trim()?.toIntOrNull() ?: 0) == -1,
-            scaleX = parts.getOrNull(12)?.trim()?.toDoubleOrNull() ?: 100.0,
-            scaleY = parts.getOrNull(13)?.trim()?.toDoubleOrNull() ?: 100.0,
-            spacing = parts.getOrNull(14)?.trim()?.toIntOrNull() ?: 0,
-            angle = parts.getOrNull(15)?.trim()?.toDoubleOrNull() ?: 0.0,
-            borderStyle = parts.getOrNull(16)?.trim()?.toIntOrNull() ?: 1,
-            outline = parts.getOrNull(17)?.trim()?.toDoubleOrNull() ?: 2.0,
-            shadow = parts.getOrNull(18)?.trim()?.toDoubleOrNull() ?: 0.0,
-            alignment = parts.getOrNull(19)?.trim()?.toIntOrNull() ?: 2,
-            marginL = parts.getOrNull(20)?.trim()?.toIntOrNull() ?: 10,
-            marginR = parts.getOrNull(21)?.trim()?.toIntOrNull() ?: 10,
-            marginV = parts.getOrNull(22)?.trim()?.toIntOrNull() ?: 10,
-            encoding = parts.getOrNull(23)?.trim()?.toIntOrNull() ?: 1
-        )
-    }
+    /**
+     * Парсит караоке-слоги из текста события.
+     * Поддерживает теги \k, \kf, \ko, \K с последующим текстом.
+     */
+    fun parseKaraokeSyllables(event: AssEvent): List<KaraokeSyllable> {
+        val text = event.text
+        val syllables = mutableListOf<KaraokeSyllable>()
+        var currentPos = 0.0
 
-    private fun parseDialogue(line: String): AssLine {
-        val afterPrefix = line.substringAfter("Dialogue:")
-        val parts = afterPrefix.split(",", limit = 10)
-        val text = parts.getOrNull(9)?.trim() ?: ""
-        val start = parseTime(parts.getOrNull(1)?.trim() ?: "0:00:00.00")
-        val end = parseTime(parts.getOrNull(2)?.trim() ?: "0:00:00.00")
-        return AssLine(
-            layer = parts.getOrNull(0)?.trim()?.toIntOrNull() ?: 0,
-            start = start,
-            end = end,
-            style = parts.getOrNull(3)?.trim() ?: "Default",
-            actor = parts.getOrNull(4)?.trim() ?: "",
-            marginL = parts.getOrNull(5)?.trim()?.toIntOrNull() ?: 0,
-            marginR = parts.getOrNull(6)?.trim()?.toIntOrNull() ?: 0,
-            marginV = parts.getOrNull(7)?.trim()?.toIntOrNull() ?: 0,
-            effect = parts.getOrNull(8)?.trim() ?: "",
-            text = text,
-            syllables = parseSyllables(text, start, end)
-        )
-    }
-
-    private fun parseSyllables(text: String, lineStart: Long = 0L, lineEnd: Long = 0L): List<Syllable> {
-        val result = mutableListOf<Syllable>()
-        val regex = """\{[\\/]+(k[fFoO]?|[Kk])(\d+)\}([^{]*)""".toRegex()
-        var currentPos = lineStart
-
+        // Регулярное выражение для караоке-тегов
+        val regex = Regex("""\{\\(kf|ko|K|k)(\d+)\}""")
         val matches = regex.findAll(text).toList()
+
         if (matches.isEmpty()) {
-            if (text.isNotEmpty()) {
-                val end = if (lineEnd > lineStart) lineEnd else lineStart + 1000L
-                result.add(Syllable(text = text, start = lineStart, end = end))
-            }
-            return result
-        }
-
-        for (match in matches) {
-            val tagStr = match.groupValues[1]
-            val durationCs = match.groupValues[2].toLongOrNull() ?: 0L
-            val sylText = match.groupValues[3]
-            val durationMs = durationCs * 10L
-
-            val tag = when (tagStr.lowercase()) {
-                "kf" -> KaraokeTag.KF
-                "ko" -> KaraokeTag.KO
-                "k" -> if (tagStr == "K") KaraokeTag.K_CAPITAL else KaraokeTag.K
-                else -> KaraokeTag.K
-            }
-
-            result.add(
-                Syllable(
-                    text = sylText,
-                    start = currentPos,
-                    end = currentPos + durationMs,
-                    tag = tag
+            // Нет караоке-тегов — весь текст как один слог
+            if (text.isNotBlank()) {
+                return listOf(
+                    KaraokeSyllable(
+                        text = text.removeAssTags().trim(),
+                        start = event.start,
+                        end = event.end,
+                        styleName = event.styleName,
+                        actor = event.actor,
+                        effect = event.effect,
+                        marginL = event.marginL,
+                        marginR = event.marginR,
+                        marginV = event.marginV
+                    )
                 )
-            )
-            currentPos += durationMs
-        }
-
-        return result
-    }
-
-    private fun parseAssColor(colorStr: String): androidx.compose.ui.graphics.Color {
-        val cleaned = colorStr.replace("&H", "").replace("&", "")
-        val hex = cleaned.padStart(8, '0')
-        val a = hex.substring(0, 2).toIntOrNull(16) ?: 0
-        val b = hex.substring(2, 4).toIntOrNull(16) ?: 0
-        val g = hex.substring(4, 6).toIntOrNull(16) ?: 0
-        val r = hex.substring(6, 8).toIntOrNull(16) ?: 0
-        return androidx.compose.ui.graphics.Color(r / 255f, g / 255f, b / 255f, (255 - a) / 255f)
-    }
-
-    fun serialize(assFile: AssFile): String {
-        val sb = StringBuilder()
-        sb.appendLine("[Script Info]")
-        sb.appendLine("Title: Karaoke Mobile Export")
-        sb.appendLine("ScriptType: v4.00+")
-        sb.appendLine("WrapStyle: 0")
-        sb.appendLine("ScaledBorderAndShadow: yes")
-        sb.appendLine("YCbCr Matrix: TV.601")
-        assFile.audioFile?.let { sb.appendLine("Audio File: $it") }
-        assFile.videoFile?.let { sb.appendLine("Video File: $it") }
-        sb.appendLine()
-
-        sb.appendLine("[V4+ Styles]")
-        sb.appendLine("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding")
-        for (style in assFile.styles) {
-            sb.appendLine(serializeStyle(style))
-        }
-        sb.appendLine()
-
-        sb.appendLine("[Events]")
-        sb.appendLine("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text")
-        for (line in assFile.lines) {
-            sb.appendLine(serializeDialogue(line))
-        }
-
-        return sb.toString()
-    }
-
-    private fun serializeStyle(style: AssStyle): String {
-        return "Style: ${style.name},${style.fontName},${style.fontSize},${colorToAss(style.primaryColor)},${colorToAss(style.secondaryColor)},${colorToAss(style.outlineColor)},${colorToAss(style.backColor)},${if (style.bold) -1 else 0},${if (style.italic) -1 else 0},${if (style.underline) -1 else 0},${if (style.strikeOut) -1 else 0},${style.scaleX},${style.scaleY},${style.spacing},${style.angle},${style.borderStyle},${style.outline},${style.shadow},${style.alignment},${style.marginL},${style.marginR},${style.marginV},${style.encoding}"
-    }
-
-    private fun serializeDialogue(line: AssLine): String {
-        val text = if (line.syllables.isNotEmpty()) {
-            line.syllables.joinToString("") { s ->
-                val tag = when (s.tag) {
-                    KaraokeTag.KF -> "\\kf${s.duration / 10}"
-                    KaraokeTag.KO -> "\\ko${s.duration / 10}"
-                    KaraokeTag.K_CAPITAL -> "\\K${s.duration / 10}"
-                    else -> "\\k${s.duration / 10}"
-                }
-                "{$tag}${s.text}"
             }
-        } else line.text
-        return "Dialogue: ${line.layer},${formatTime(line.start)},${formatTime(line.end)},${line.style},${line.actor},${line.marginL},${line.marginR},${line.marginV},${line.effect},$text"
+            return emptyList()
+        }
+
+        var lastEnd = 0
+        for (match in matches) {
+            val rawTag = match.groupValues[1]
+            val tagType = when {
+                rawTag == "K" -> KaraokeTagType.K_CAPITAL
+                rawTag.equals("kf", ignoreCase = true) -> KaraokeTagType.KF
+                rawTag.equals("ko", ignoreCase = true) -> KaraokeTagType.KO
+                else -> KaraokeTagType.K
+            }
+            val centis = match.groupValues[2].toIntOrNull() ?: 10
+            val duration = centis / 100.0
+
+            // Текст между текущим и следующим тегом
+            val textStart = match.range.last + 1
+            val nextMatch = matches.getOrNull(matches.indexOf(match) + 1)
+            val textEnd = nextMatch?.range?.first ?: text.length
+            val syllableText = text.substring(textStart, textEnd).removeAssTags().trim()
+
+            if (syllableText.isNotEmpty() || syllables.isEmpty()) {
+                val start = event.start + currentPos
+                val end = start + duration
+                syllables.add(
+                    KaraokeSyllable(
+                        text = syllableText.ifEmpty { " " },
+                        start = start,
+                        end = end,
+                        tagType = tagType,
+                        styleName = event.styleName,
+                        actor = event.actor,
+                        effect = event.effect,
+                        marginL = event.marginL,
+                        marginR = event.marginR,
+                        marginV = event.marginV
+                    )
+                )
+                currentPos += duration
+            }
+        }
+
+        // Если остался текст после последнего тега
+        val lastMatch = matches.last()
+        val remainingStart = lastMatch.range.last + 1
+        if (remainingStart < text.length) {
+            val remaining = text.substring(remainingStart).removeAssTags().trim()
+            if (remaining.isNotEmpty()) {
+                val lastSyllable = syllables.last()
+                syllables[syllables.size - 1] = lastSyllable.copy(
+                    text = lastSyllable.text + remaining
+                )
+            }
+        }
+
+        return syllables
     }
 
-    private fun colorToAss(color: androidx.compose.ui.graphics.Color): String {
-        val a = (255 - (color.alpha * 255).toInt()).toString(16).padStart(2, '0')
-        val r = (color.red * 255).toInt().toString(16).padStart(2, '0')
-        val g = (color.green * 255).toInt().toString(16).padStart(2, '0')
-        val b = (color.blue * 255).toInt().toString(16).padStart(2, '0')
-        return "&H$a$b$g$r"
+    /**
+     * Сериализует список слогов обратно в ASS-текст
+     */
+    fun serializeSyllables(syllables: List<KaraokeSyllable>): String {
+        return syllables.joinToString("") { syllable ->
+            val centis = Math.round(syllable.duration * 100.0).toInt().coerceAtLeast(1)
+            val tag = when (syllable.tagType) {
+                KaraokeTagType.K -> "\\k"
+                KaraokeTagType.KF -> "\\kf"
+                KaraokeTagType.KO -> "\\ko"
+                KaraokeTagType.K_CAPITAL -> "\\K"
+            }
+            "{$tag$centis}${syllable.text}"
+        }
+    }
+
+    /**
+     * Пересобирает событие из слогов
+     */
+    fun rebuildEventFromSyllables(event: AssEvent): AssEvent {
+        if (event.syllables.isEmpty()) return event
+        val newText = serializeSyllables(event.syllables)
+        val first = event.syllables.first()
+        val last = event.syllables.last()
+        return event.copy(
+            start = first.start,
+            end = last.end,
+            text = newText
+        )
+    }
+
+    private fun String.removeAssTags(): String {
+        // Удаляем override блоки {\...}
+        return this.replace(Regex("""\{[^}]*\}"""), "")
+    }
+
+    /**
+     * Создаёт пустой ASS документ с заданной длительностью
+     */
+    fun createBlankDocument(duration: Double): AssDocument {
+        val event = AssEvent(
+            start = 0.0,
+            end = duration,
+            text = "{\\k0}"
+        )
+        return AssDocument(
+            events = listOf(event.copy(syllables = listOf(
+                KaraokeSyllable(
+                    text = "",
+                    start = 0.0,
+                    end = duration,
+                    tagType = KaraokeTagType.K
+                )
+            )))
+        )
     }
 }

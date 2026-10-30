@@ -176,6 +176,11 @@ class DualTimeline(ttk.Frame):
         self._handle_drag: Optional[tuple[str, str]] = None
         self._karaoke_drag: Optional[tuple[str, str]] = None
         self._karaoke_drag_time: Optional[float] = None
+        self._syllable_resize_drag: Optional[tuple[str, str]] = None
+        self._syllable_resize_time: Optional[float] = None
+        self._syllable_move_drag: Optional[str] = None
+        self._syllable_move_offset: float = 0.0
+        self._drag_tooltip: Optional[tk.Label] = None
         self.is_karaoke: bool = editable_karaoke
         self.advanced_mode: bool = False
         self.tracks: list[int] = [0]
@@ -226,6 +231,7 @@ class DualTimeline(ttk.Frame):
         self.detail.bind("<Double-Button-1>", self._detail_double_click)
         self.detail.bind("<ButtonPress-2>", self._pan_start)
         self.detail.bind("<B2-Motion>", self._pan_drag)
+        self.detail.bind("<ButtonPress-3>", self._detail_right_click)
 
     def _wave_bounds(self, h: int) -> tuple[int, int]:
         wave_top = 26
@@ -760,6 +766,27 @@ class DualTimeline(ttk.Frame):
                         dash=(3, 2) if (is_remap and t_id == 0 and not selected) else (),
                         tags=("syllable", s.id),
                     )
+                    # Resize handles for independent syllable edge editing
+                    if selected and self.editable_karaoke:
+                        handle_w = 6
+                        handle_h = 10
+                        mid_y = (syl_top + syl_bottom) / 2
+                        # Left handle
+                        c.create_polygon(
+                            x0, mid_y - handle_h/2,
+                            x0 + handle_w, mid_y,
+                            x0, mid_y + handle_h/2,
+                            fill=self.palette.warning, outline="",
+                            tags=("syllable-resize-left", s.id),
+                        )
+                        # Right handle
+                        c.create_polygon(
+                            max(x0 + 2, x1), mid_y - handle_h/2,
+                            max(x0 + 2, x1) - handle_w, mid_y,
+                            max(x0 + 2, x1), mid_y + handle_h/2,
+                            fill=self.palette.warning, outline="",
+                            tags=("syllable-resize-right", s.id),
+                        )
 
                     width_px = x1 - x0
                     if width_px >= 14:
@@ -822,6 +849,27 @@ class DualTimeline(ttk.Frame):
                     fill=fill, outline=outline, width=2 if selected or changed else 1,
                     tags=("syllable", s.id),
                 )
+                # Resize handles for independent syllable edge editing
+                if selected and self.editable_karaoke:
+                    handle_w = 6
+                    handle_h = 10
+                    mid_y = (lane_top + lane_bottom) / 2
+                    # Left handle
+                    c.create_polygon(
+                        x0, mid_y - handle_h/2,
+                        x0 + handle_w, mid_y,
+                        x0, mid_y + handle_h/2,
+                        fill=self.palette.warning, outline="",
+                        tags=("syllable-resize-left", s.id),
+                    )
+                    # Right handle
+                    c.create_polygon(
+                        max(x0 + 2, x1), mid_y - handle_h/2,
+                        max(x0 + 2, x1) - handle_w, mid_y,
+                        max(x0 + 2, x1), mid_y + handle_h/2,
+                        fill=self.palette.warning, outline="",
+                        tags=("syllable-resize-right", s.id),
+                    )
                 if s.burst_marked and x1 - x0 >= 11:
                     c.create_text(
                         x0 + 3, lane_top + 2, text="B", anchor="nw",
@@ -928,6 +976,7 @@ class DualTimeline(ttk.Frame):
                 for item in items:
                     canvas.delete(item)
                 continue
+            assert value is not None
             x = self._time_to_x(float(value), overview=overview)
             h = max(1, canvas.winfo_height())
             if items:
@@ -1101,6 +1150,40 @@ class DualTimeline(ttk.Frame):
                 self.redraw()
                 self._emit_selection()
                 return
+        if self.editable_karaoke and "syllable-resize-left" in tags and sid:
+            self._syllable_resize_drag = (sid, "start")
+            self._syllable_resize_time = None
+            self._handle_drag = None
+            self._karaoke_drag = None
+            self._syllable_move_drag = None
+            self.selected_ids = {sid}
+            self.redraw()
+            self._emit_selection()
+            return
+        if self.editable_karaoke and "syllable-resize-right" in tags and sid:
+            self._syllable_resize_drag = (sid, "end")
+            self._syllable_resize_time = None
+            self._handle_drag = None
+            self._karaoke_drag = None
+            self._syllable_move_drag = None
+            self.selected_ids = {sid}
+            self.redraw()
+            self._emit_selection()
+            return
+        # Shift+click on syllable body initiates move mode
+        shift_pressed = bool(getattr(event, "state", 0) & 0x0001)
+        if self.editable_karaoke and sid and shift_pressed and "syllable" in tags:
+            s = next((item for item in self.syllables if item.id == sid), None)
+            if s is not None:
+                self._syllable_move_drag = sid
+                self._syllable_move_offset = self._x_to_time(event.x, overview=False) - s.start
+                self._handle_drag = None
+                self._karaoke_drag = None
+                self._syllable_resize_drag = None
+                self.selected_ids = {sid}
+                self.redraw()
+                self._emit_selection()
+                return
         if self.editable_measurements and "measure-handle" in tags and sid:
             side = "start" if "handle-start" in tags else "end"
             self.selected_ids = {sid}
@@ -1134,6 +1217,38 @@ class DualTimeline(ttk.Frame):
             self.syllables[li] = replace(left, end=t)
             self.syllables[ri] = replace(right, start=t)
             self._karaoke_drag_time = t
+            self._show_drag_tooltip(event.x, event.y, f"{format_clock(t)}")
+            self.request_redraw()
+            return
+        if self._syllable_resize_drag is not None:
+            sid, side = self._syllable_resize_drag
+            index = next((i for i, item in enumerate(self.syllables) if item.id == sid), None)
+            if index is None:
+                return
+            s = self.syllables[index]
+            t = round(self._x_to_time(event.x, overview=False) * 100.0) / 100.0
+            if side == "start":
+                t = min(t, s.end - 0.01)
+                self.syllables[index] = replace(s, start=t)
+            else:
+                t = max(t, s.start + 0.01)
+                self.syllables[index] = replace(s, end=t)
+            self._syllable_resize_time = t
+            new_s = self.syllables[index]
+            self._show_drag_tooltip(event.x, event.y, f"{side.upper()}: {format_clock(t)}  |  Dur: {new_s.end - new_s.start:.3f}s")
+            self.request_redraw()
+            return
+        if self._syllable_move_drag is not None:
+            sid = self._syllable_move_drag
+            index = next((i for i, item in enumerate(self.syllables) if item.id == sid), None)
+            if index is None:
+                return
+            s = self.syllables[index]
+            t = self._x_to_time(event.x, overview=False) - self._syllable_move_offset
+            duration = s.end - s.start
+            t = max(0.0, t)
+            self.syllables[index] = replace(s, start=t, end=t + duration)
+            self._show_drag_tooltip(event.x, event.y, f"Start: {format_clock(t)}  |  Dur: {duration:.3f}s")
             self.request_redraw()
             return
         if self._handle_drag is None:
@@ -1154,6 +1269,7 @@ class DualTimeline(ttk.Frame):
         self.request_redraw()
 
     def _detail_release(self, _event) -> None:
+        self._hide_drag_tooltip()
         if self._karaoke_drag is not None:
             left, right = self._karaoke_drag
             boundary = self._karaoke_drag_time
@@ -1161,6 +1277,20 @@ class DualTimeline(ttk.Frame):
             self._karaoke_drag_time = None
             if boundary is not None and self.on_karaoke_boundary:
                 self.on_karaoke_boundary(left, right, boundary)
+            return
+        if self._syllable_resize_drag is not None:
+            sid, side = self._syllable_resize_drag
+            self._syllable_resize_drag = None
+            item = next((s for s in self.syllables if s.id == sid), None)
+            if item is not None and self.on_syllable_resize:
+                self.on_syllable_resize(sid, item.start, item.end)
+            return
+        if self._syllable_move_drag is not None:
+            sid = self._syllable_move_drag
+            self._syllable_move_drag = None
+            item = next((s for s in self.syllables if s.id == sid), None)
+            if item is not None and self.on_syllable_move:
+                self.on_syllable_move(sid, item.start)
             return
         if self._handle_drag is None:
             return
@@ -1200,6 +1330,56 @@ class DualTimeline(ttk.Frame):
         self.redraw()
         self._emit_selection()
         return "break"
+
+    def _detail_right_click(self, event) -> str:
+        """Show context menu for syllable operations on the timeline."""
+        tags = self._current_tags()
+        sid = self._syllable_id_from_tags(tags) or self._sid_from_event(event)
+        if not sid:
+            return "break"
+        self.selected_ids = {sid}
+        self.redraw()
+        self._emit_selection()
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label="Разделить", command=lambda: self._context_action("__split__", sid))
+        menu.add_command(label="Удалить", command=lambda: self._context_action("__delete__", sid))
+        menu.add_command(label="Вставить после", command=lambda: self._context_action("__insert__", sid))
+        menu.add_separator()
+        menu.add_command(label="Совместить с предыдущим", command=lambda: self._context_action("__merge_prev__", sid))
+        menu.add_command(label="Совместить со следующим", command=lambda: self._context_action("__merge_next__", sid))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+        return "break"
+
+    def _context_action(self, action: str, sid: str) -> None:
+        if self.on_activate:
+            self.on_activate(f"{action}:{sid}")
+
+    def _show_drag_tooltip(self, x: int, y: int, text: str) -> None:
+        if self._drag_tooltip is None:
+            self._drag_tooltip = tk.Label(
+                self.detail,
+                text=text,
+                bg=self.palette.tooltip_bg,
+                fg=self.palette.tooltip_fg,
+                font=("TkDefaultFont", 9),
+                relief="solid",
+                borderwidth=1,
+                padx=4,
+                pady=2,
+            )
+        else:
+            self._drag_tooltip.configure(text=text)
+        # Position above the cursor
+        tx = max(0, min(x + 10, self.detail.winfo_width() - 100))
+        ty = max(0, y - 30)
+        self._drag_tooltip.place(x=tx, y=ty)
+
+    def _hide_drag_tooltip(self) -> None:
+        if self._drag_tooltip is not None:
+            self._drag_tooltip.place_forget()
 
     def _overview_navigate(self, event) -> str:
         """Scrub/pan the detailed viewport directly from the mini timeline."""

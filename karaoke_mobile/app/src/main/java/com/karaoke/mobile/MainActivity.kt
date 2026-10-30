@@ -1,276 +1,220 @@
 package com.karaoke.mobile
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Undo
-import androidx.compose.material.icons.automirrored.filled.Redo
-import androidx.compose.material.icons.filled.AudioFile
-import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Snackbar
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.viewmodel.compose.viewModel
-import com.karaoke.mobile.ui.components.EmptyState
-import com.karaoke.mobile.ui.components.FilesTab
-import com.karaoke.mobile.ui.components.InspectorPane
-import com.karaoke.mobile.ui.components.SyllablesTab
-import com.karaoke.mobile.ui.components.TimelinePane
-import com.karaoke.mobile.ui.theme.KaraokeDark
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import com.karaoke.mobile.model.KaraokeTagType
+import com.karaoke.mobile.ui.components.*
+import com.karaoke.mobile.viewmodel.StudioUiState
 import com.karaoke.mobile.ui.theme.KaraokeMobileTheme
-import com.karaoke.mobile.ui.theme.KaraokeOnSurface
-import com.karaoke.mobile.ui.theme.KaraokeOnSurfaceVariant
-import com.karaoke.mobile.ui.theme.KaraokePrimary
-import com.karaoke.mobile.ui.theme.KaraokeSurface
+import com.karaoke.mobile.ui.theme.NavyDarkPalette
+import com.karaoke.mobile.viewmodel.StudioEvent
 import com.karaoke.mobile.viewmodel.StudioState
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
+
+    private val viewModel: StudioState by viewModels()
+
+    // Лаунчеры для выбора файлов
+    private val pickMediaLauncher = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let { viewModel.setMedia(it, this) }
+    }
+
+    private val pickAssLauncher = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let { viewModel.loadAss(it, this) }
+    }
+
+    private val exportProjectLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("application/zip")
+    ) { uri: Uri? ->
+        uri?.let { viewModel.exportProject(this, it) }
+    }
+
+    private val exportAssLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri: Uri? ->
+        uri?.let { viewModel.exportAss(this, it) }
+    }
+
+    private val importProjectLauncher = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let { viewModel.importProject(this, it) }
+    }
+
+    private val importAssLauncher = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let { viewModel.loadAss(it, this) }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+
+        // Обработка событий ViewModel
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.events.collect { event ->
+                    when (event) {
+                        is StudioEvent.ShowError -> {
+                            // Показываем через Snackbar или Toast
+                        }
+                        is StudioEvent.ShowSuccess -> {
+                            // Показываем через Snackbar или Toast
+                        }
+                        is StudioEvent.RequestMediaPick -> {
+                            pickMediaLauncher.launch("audio/*")
+                        }
+                        is StudioEvent.ShareFile -> {
+                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                type = "*/*"
+                                putExtra(Intent.EXTRA_STREAM, event.uri)
+                            }
+                            startActivity(Intent.createChooser(shareIntent, "Поделиться"))
+                        }
+                    }
+                }
+            }
+        }
+
         setContent {
-            KaraokeMobileTheme(darkTheme = true) {
-                StudioScreen()
-            }
-        }
-    }
-}
+            val uiState by viewModel.uiState
+            val context = LocalContext.current
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun StudioScreen(viewModel: StudioState = viewModel()) {
-    val context = LocalContext.current
-    val snackbarHostState = remember { SnackbarHostState() }
-    val lines = viewModel.editor.current.lines
-    val currentLine = lines.getOrNull(viewModel.currentLineIndex)
-    val currentSyllable = currentLine?.syllables?.getOrNull(viewModel.currentSyllableIndex)
+            KaraokeMobileTheme(palette = uiState.currentTheme) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        if (uiState.syllables.isEmpty() && uiState.project == null) {
+                            // Пустое состояние
+                            EmptyState(
+                                palette = uiState.currentTheme,
+                                onCreateProject = {
+                                    viewModel.createNewProject("project-${System.currentTimeMillis()}", context)
+                                },
+                                onOpenProject = {
+                                    // TODO: показать список проектов
+                                },
+                                onImportProject = {
+                                    importProjectLauncher.launch("application/zip")
+                                },
+                                onLoadAss = {
+                                    pickAssLauncher.launch("text/plain")
+                                }
+                            )
+                        } else {
+                            // Основной интерфейс студии
+                            StudioScreen(
+                                uiState = uiState,
+                                viewModel = viewModel,
+                                onPickMedia = { pickMediaLauncher.launch("audio/*") },
+                                onPickAss = { pickAssLauncher.launch("text/plain") }
+                            )
+                        }
 
-    LaunchedEffect(viewModel.snackbarMessage) {
-        viewModel.snackbarMessage?.let {
-            snackbarHostState.showSnackbar(it)
-            viewModel.dismissSnackbar()
-        }
-    }
+                        // Диалоги
+                        if (uiState.showThemePicker) {
+                            ThemePickerDialog(
+                                currentTheme = uiState.currentTheme,
+                                onThemeSelected = { viewModel.setTheme(it) },
+                                onDismiss = { viewModel.hideThemePicker() }
+                            )
+                        }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Default.MusicNote,
-                            contentDescription = null,
-                            tint = KaraokePrimary,
-                            modifier = Modifier.size(28.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Karaoke Studio",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = KaraokeOnSurface
-                        )
-                    }
-                },
-                actions = {
-                    IconButton(
-                        onClick = { viewModel.undo() },
-                        enabled = viewModel.editor.canUndo()
-                    ) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.Undo,
-                            "Отменить",
-                            tint = if (viewModel.editor.canUndo()) KaraokeOnSurface else KaraokeOnSurfaceVariant.copy(alpha = 0.4f)
-                        )
-                    }
-                    IconButton(
-                        onClick = { viewModel.redo() },
-                        enabled = viewModel.editor.canRedo()
-                    ) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.Redo,
-                            "Повторить",
-                            tint = if (viewModel.editor.canRedo()) KaraokeOnSurface else KaraokeOnSurfaceVariant.copy(alpha = 0.4f)
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = KaraokeDark,
-                    titleContentColor = KaraokeOnSurface
-                )
-            )
-        },
-        bottomBar = {
-            NavigationBar(
-                containerColor = KaraokeSurface,
-                tonalElevation = 0.dp
-            ) {
-                NavigationBarItem(
-                    icon = { Icon(Icons.Default.Description, contentDescription = null) },
-                    label = { Text("Слоги") },
-                    selected = viewModel.currentTab == StudioState.StudioTab.SYLLABLES,
-                    onClick = { viewModel.setTab(StudioState.StudioTab.SYLLABLES) }
-                )
-                NavigationBarItem(
-                    icon = { Icon(Icons.Default.FolderOpen, contentDescription = null) },
-                    label = { Text("Файлы") },
-                    selected = viewModel.currentTab == StudioState.StudioTab.FILES,
-                    onClick = { viewModel.setTab(StudioState.StudioTab.FILES) }
-                )
-                NavigationBarItem(
-                    icon = { Icon(Icons.Default.Settings, contentDescription = null) },
-                    label = { Text("Настройки") },
-                    selected = viewModel.currentTab == StudioState.StudioTab.SETTINGS,
-                    onClick = { viewModel.setTab(StudioState.StudioTab.SETTINGS) }
-                )
-            }
-        },
-        snackbarHost = {
-            SnackbarHost(snackbarHostState) { data ->
-                Snackbar(
-                    snackbarData = data,
-                    containerColor = KaraokeSurface,
-                    contentColor = KaraokeOnSurface,
-                    shape = RoundedCornerShape(12.dp)
-                )
-            }
-        },
-        containerColor = KaraokeDark
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .background(KaraokeDark)
-        ) {
-            when (viewModel.currentTab) {
-                StudioState.StudioTab.SYLLABLES -> {
-                    if (lines.isEmpty()) {
-                        EmptyState(
-                            title = "Нет данных",
-                            subtitle = "Загрузите ASS-файл во вкладке «Файлы», чтобы начать редактирование",
-                            modifier = Modifier.weight(1f)
-                        )
-                    } else {
-                        // Timeline
-                        TimelinePane(
-                            waveform = viewModel.waveform,
-                            lines = lines,
-                            currentLineIndex = viewModel.currentLineIndex,
-                            currentSyllableIndex = viewModel.currentSyllableIndex,
-                            playbackPositionMs = viewModel.playbackPositionMs,
-                            zoomLevel = viewModel.zoomLevel,
-                            scrollOffsetMs = viewModel.scrollOffsetMs,
-                            viewportDurationMs = viewModel.viewportDurationMs,
-                            onSeek = { viewModel.seekTo(it) },
-                            onZoomChange = { viewModel.setZoom(it) },
-                            onScrollChange = { viewModel.setScrollOffset(it) },
-                            onSyllableTap = { lIdx, sIdx -> viewModel.selectSyllable(lIdx, sIdx) },
+                        if (uiState.showExportDialog) {
+                            ExportImportDialog(
+                                isExport = true,
+                                palette = uiState.currentTheme,
+                                onExportProject = {
+                                    exportProjectLauncher.launch("karaoke-project.zip")
+                                    viewModel.hideExportDialog()
+                                },
+                                onExportAss = {
+                                    exportAssLauncher.launch("subtitles.ass")
+                                    viewModel.hideExportDialog()
+                                },
+                                onImportProject = {},
+                                onImportAss = {},
+                                onDismiss = { viewModel.hideExportDialog() }
+                            )
+                        }
+
+                        if (uiState.showImportDialog) {
+                            ExportImportDialog(
+                                isExport = false,
+                                palette = uiState.currentTheme,
+                                onExportProject = {},
+                                onExportAss = {},
+                                onImportProject = {
+                                    importProjectLauncher.launch("application/zip")
+                                    viewModel.hideImportDialog()
+                                },
+                                onImportAss = {
+                                    importAssLauncher.launch("text/plain")
+                                    viewModel.hideImportDialog()
+                                },
+                                onDismiss = { viewModel.hideImportDialog() }
+                            )
+                        }
+
+                        if (uiState.showTimingEditor) {
+                            TimingEditorDialog(
+                                start = uiState.timingStart,
+                                end = uiState.timingEnd,
+                                palette = uiState.currentTheme,
+                                onStartChange = { viewModel.updateTiming(it, uiState.timingEnd) },
+                                onEndChange = { viewModel.updateTiming(uiState.timingStart, it) },
+                                onConfirm = { viewModel.commitTiming() },
+                                onDismiss = { viewModel.cancelTimingEdit() }
+                            )
+                        }
+
+                        // Сообщения
+                        Box(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 8.dp)
-                        )
-
-                        // Inspector
-                        InspectorPane(
-                            currentLine = currentLine,
-                            currentSyllable = currentSyllable,
-                            isPlaying = viewModel.isPlaying,
-                            playbackSpeed = viewModel.playbackSpeed,
-                            playbackPositionMs = viewModel.playbackPositionMs,
-                            inPointMs = viewModel.inPointMs,
-                            outPointMs = viewModel.outPointMs,
-                            loopEnabled = viewModel.loopEnabled,
-                            onPlayPause = { viewModel.playPause() },
-                            onSeek = { viewModel.seekTo(it) },
-                            onSetSpeed = { viewModel.setPlaybackSpeed(it) },
-                            onSetInPoint = { viewModel.setInPoint() },
-                            onSetOutPoint = { viewModel.setOutPoint() },
-                            onToggleLoop = { viewModel.toggleLoop() },
-                            onSnapToLineStart = { currentLine?.let { viewModel.snapToLineStart(it) } },
-                            onSnapToLineEnd = { currentLine?.let { viewModel.snapToLineEnd(it) } },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp)
-                        )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        // Syllables list
-                        SyllablesTab(
-                            lines = lines,
-                            currentLineIndex = viewModel.currentLineIndex,
-                            currentSyllableIndex = viewModel.currentSyllableIndex,
-                            onSelectLine = { viewModel.selectLine(it) },
-                            onSelectSyllable = { lIdx, sIdx -> viewModel.selectSyllable(lIdx, sIdx) },
-                            onUpdateSyllableText = { lIdx, sIdx, text -> viewModel.updateSyllableText(lIdx, sIdx, text) },
-                            onToggleBurst = { lIdx, sIdx -> viewModel.toggleSyllableBurst(lIdx, sIdx) },
-                            onSplitSyllable = { lIdx, sIdx, point -> viewModel.splitSyllable(lIdx, sIdx, point) },
-                            onMergeSyllables = { lIdx, from, to -> viewModel.mergeSyllables(lIdx, from, to) },
-                            onSnapToSyllable = { viewModel.snapToSyllable(it) },
-                            modifier = Modifier.weight(1f)
-                        )
+                                .align(Alignment.BottomCenter)
+                                .padding(16.dp)
+                        ) {
+                            uiState.errorMessage?.let {
+                                MessageSnackbar(
+                                    message = it,
+                                    isError = true,
+                                    palette = uiState.currentTheme,
+                                    onDismiss = { viewModel.clearMessage() }
+                                )
+                            }
+                            uiState.successMessage?.let {
+                                MessageSnackbar(
+                                    message = it,
+                                    isError = false,
+                                    palette = uiState.currentTheme,
+                                    onDismiss = { viewModel.clearMessage() }
+                                )
+                            }
+                        }
                     }
-                }
-
-                StudioState.StudioTab.FILES -> {
-                    FilesTab(
-                        lines = lines,
-                        audioFileName = viewModel.editor.current.audioFile,
-                        onLoadAss = { viewModel.loadAss(it) },
-                        onSetAudio = { ctx, uri -> viewModel.setAudio(ctx, uri) },
-                        onSaveAss = { viewModel.serializeAss() },
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
-
-                StudioState.StudioTab.SETTINGS -> {
-                    SettingsTab(modifier = Modifier.fillMaxSize())
                 }
             }
         }
@@ -278,48 +222,82 @@ fun StudioScreen(viewModel: StudioState = viewModel()) {
 }
 
 @Composable
-fun SettingsTab(modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Text(
-            text = "Настройки",
-            style = MaterialTheme.typography.headlineSmall,
-            color = KaraokeOnSurface
+private fun StudioScreen(
+    uiState: StudioUiState,
+    viewModel: StudioState,
+    onPickMedia: () -> Unit,
+    onPickAss: () -> Unit
+) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        // Таймлайн
+        Timeline(
+            syllables = uiState.syllables,
+            waveformData = uiState.waveformData,
+            playbackPosition = uiState.playbackPosition,
+            duration = uiState.mediaDuration.coerceAtLeast(
+                uiState.syllables.maxOfOrNull { it.end } ?: 300.0
+            ),
+            zoomLevel = uiState.zoomLevel,
+            scrollOffset = uiState.scrollOffset,
+            selectedIds = uiState.selectedIds,
+            activeSyllableId = uiState.activeSyllableId,
+            palette = uiState.currentTheme,
+            onSeek = { viewModel.seekTo(it) },
+            onSelectSyllable = { id ->
+                viewModel.selectSyllable(id, addToSelection = false)
+            },
+            onZoomChange = { viewModel.setZoom(it) },
+            onScrollChange = { viewModel.setScroll(it) },
+            modifier = Modifier.fillMaxWidth()
         )
-        InfoCard(
-            title = "О приложении",
-            content = "Karaoke Mobile Studio v1.0\nРедактор ASS-караоке для Android"
-        )
-        InfoCard(
-            title = "Горячие клавиши",
-            content = "Space — Play/Pause\n← → — Навигация по слогам\nCtrl+Z — Отмена\nCtrl+Y — Повтор"
-        )
-    }
-}
 
-@Composable
-fun InfoCard(title: String, content: String, modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(KaraokeSurface)
-            .padding(16.dp)
-    ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleLarge,
-            color = KaraokePrimary,
-            modifier = Modifier.padding(bottom = 8.dp)
+        // Инспектор / панель управления
+        InspectorPane(
+            isPlaying = uiState.isPlaying,
+            playbackPosition = uiState.playbackPosition,
+            playbackSpeed = uiState.playbackSpeed,
+            duration = uiState.mediaDuration.coerceAtLeast(
+                uiState.syllables.maxOfOrNull { it.end } ?: 300.0
+            ),
+            selectedCount = uiState.selectedIds.size,
+            canUndo = uiState.canUndo,
+            canRedo = uiState.canRedo,
+            palette = uiState.currentTheme,
+            onPlayPause = { viewModel.togglePlayback() },
+            onStop = { viewModel.stopPlayback() },
+            onSeek = { viewModel.seekTo(it) },
+            onSpeedChange = { viewModel.setPlaybackSpeed(it) },
+            onUndo = { viewModel.undo() },
+            onRedo = { viewModel.redo() },
+            onSplit = {
+                uiState.activeSyllableId?.let { viewModel.splitSyllable(it) }
+            },
+            onMerge = { viewModel.mergeSelected() },
+            onInsert = { viewModel.insertSyllable() },
+            onSetTagType = { viewModel.setTagType(it) },
+            onToggleUnspoken = { viewModel.toggleUnspoken() },
+            onShowSettings = { viewModel.showSettings() },
+            onShowThemes = { viewModel.showThemePicker() },
+            onShowExport = { viewModel.showExportDialog() },
+            onShowImport = { viewModel.showImportDialog() }
         )
-        Text(
-            text = content,
-            style = MaterialTheme.typography.bodyLarge,
-            color = KaraokeOnSurfaceVariant
+
+        // Список слогов
+        SyllablesTab(
+            syllables = uiState.syllables,
+            selectedIds = uiState.selectedIds,
+            activeSyllableId = uiState.activeSyllableId,
+            editTextId = uiState.editTextId,
+            editTextValue = uiState.editTextValue,
+            palette = uiState.currentTheme,
+            onSelect = { id, add -> viewModel.selectSyllable(id, add) },
+            onStartEdit = { viewModel.startEditText(it) },
+            onEditValueChange = { viewModel.updateEditText(it) },
+            onCommitEdit = { viewModel.commitEditText() },
+            onCancelEdit = { viewModel.cancelEditText() },
+            onStartTimingEdit = { viewModel.startTimingEdit(it) },
+            onDelete = { viewModel.deleteSyllable(it) },
+            modifier = Modifier.weight(1f)
         )
     }
 }
