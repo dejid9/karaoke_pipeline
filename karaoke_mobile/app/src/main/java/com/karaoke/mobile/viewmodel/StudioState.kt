@@ -100,8 +100,15 @@ data class StudioUiState(
     val renderFontSize: Int = 54,
     val renderFontName: String = "Arial",
     val renderSmoothScroll: Boolean = true,
-    val renderLeadInSeconds: Double = 0.5
-)
+    val renderLeadInSeconds: Double = 0.5,
+    val selectedBurstId: String? = null
+) {
+    val spsStatistics: SpsStatistics
+        get() = SpsCalculator.calculateStatistics(syllables)
+
+    val spsBursts: List<SpsBurst>
+        get() = SpsCalculator.detectBursts(syllables)
+}
 
 /**
  * События навигации/эффектов
@@ -875,6 +882,115 @@ class StudioState : ViewModel() {
 
     fun cancelTimingEdit() {
         _uiState.value = _uiState.value.copy(showTimingEditor = false, timingEditId = null)
+    }
+
+    // --- Точный SPS и прецизионная обрезка слогов ---
+
+    fun selectSyllableForTrimming(id: String) {
+        val syl = _uiState.value.syllables.find { it.id == id } ?: return
+        _uiState.value = _uiState.value.copy(
+            activeSyllableId = id,
+            timingEditId = id,
+            timingStart = syl.start,
+            timingEnd = syl.end
+        )
+    }
+
+    fun adjustSyllableStart(id: String, deltaSec: Double) {
+        val syl = editor.getAllSyllables().find { it.id == id } ?: return
+        val newStart = (kotlin.math.round((syl.start + deltaSec) * 100.0) / 100.0).coerceAtLeast(0.0)
+        if (newStart >= syl.end) return
+        editor.setTiming(id, newStart, syl.end)
+        _uiState.value = _uiState.value.copy(
+            syllables = editor.getAllSyllables(),
+            timingStart = newStart,
+            canUndo = editor.canUndo,
+            canRedo = editor.canRedo
+        )
+    }
+
+    fun adjustSyllableEnd(id: String, deltaSec: Double) {
+        val syl = editor.getAllSyllables().find { it.id == id } ?: return
+        val newEnd = (kotlin.math.round((syl.end + deltaSec) * 100.0) / 100.0).coerceAtLeast(syl.start + 0.01)
+        editor.setTiming(id, syl.start, newEnd)
+        _uiState.value = _uiState.value.copy(
+            syllables = editor.getAllSyllables(),
+            timingEnd = newEnd,
+            canUndo = editor.canUndo,
+            canRedo = editor.canRedo
+        )
+    }
+
+    fun snapStartToPrevious(id: String) {
+        val list = editor.getAllSyllables()
+        val idx = list.indexOfFirst { it.id == id }
+        if (idx <= 0) return
+        val prevSyl = list[idx - 1]
+        val newStart = prevSyl.end
+        if (newStart < list[idx].end) {
+            editor.setTiming(id, newStart, list[idx].end)
+            _uiState.value = _uiState.value.copy(
+                syllables = editor.getAllSyllables(),
+                timingStart = newStart,
+                canUndo = editor.canUndo,
+                canRedo = editor.canRedo
+            )
+            addLog(LogLevel.ACTION, "Начало слога привязано к предыдущему (${formatTime(newStart)})", "SPS")
+        }
+    }
+
+    fun snapEndToNext(id: String) {
+        val list = editor.getAllSyllables()
+        val idx = list.indexOfFirst { it.id == id }
+        if (idx < 0 || idx >= list.size - 1) return
+        val nextSyl = list[idx + 1]
+        val newEnd = nextSyl.start
+        if (newEnd > list[idx].start) {
+            editor.setTiming(id, list[idx].start, newEnd)
+            _uiState.value = _uiState.value.copy(
+                syllables = editor.getAllSyllables(),
+                timingEnd = newEnd,
+                canUndo = editor.canUndo,
+                canRedo = editor.canRedo
+            )
+            addLog(LogLevel.ACTION, "Конец слога привязан к следующему (${formatTime(newEnd)})", "SPS")
+        }
+    }
+
+    fun shiftJointBoundary(id: String, deltaSec: Double) {
+        val list = editor.getAllSyllables()
+        val idx = list.indexOfFirst { it.id == id }
+        if (idx < 0 || idx >= list.size - 1) return
+        val currentBoundary = list[idx].end
+        val newBoundary = (kotlin.math.round((currentBoundary + deltaSec) * 100.0) / 100.0)
+        val res = editor.redistributeBoundary(id, newBoundary)
+        if (res.success) {
+            _uiState.value = _uiState.value.copy(
+                syllables = editor.getAllSyllables(),
+                timingEnd = newBoundary,
+                canUndo = editor.canUndo,
+                canRedo = editor.canRedo
+            )
+            addLog(LogLevel.ACTION, "Стык слогов смещен на ${if (deltaSec > 0) "+" else ""}${deltaSec}с (${formatTime(newBoundary)})", "SPS")
+        }
+    }
+
+    fun selectBurst(burst: SpsBurst) {
+        val firstId = burst.syllableIds.firstOrNull() ?: return
+        val syl = _uiState.value.syllables.find { it.id == firstId } ?: return
+        val pps = 50f * _uiState.value.zoomLevel
+        val targetScroll = (burst.start * pps).toFloat()
+        _uiState.value = _uiState.value.copy(
+            selectedBurstId = burst.id,
+            activeSyllableId = firstId,
+            timingEditId = firstId,
+            timingStart = syl.start,
+            timingEnd = syl.end,
+            scrollOffset = targetScroll.coerceAtLeast(0f),
+            playbackPosition = burst.start
+        )
+        seekTo(burst.start)
+        addLog(LogLevel.ACTION, "Выбрана очередь: \"${burst.text.take(30)}\" (Пик ${burst.peakSps} SPS)", "SPS")
     }
 
     fun setCanvasWidth(width: Float) {

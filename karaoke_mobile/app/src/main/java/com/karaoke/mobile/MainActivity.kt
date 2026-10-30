@@ -280,12 +280,42 @@ class MainActivity : ComponentActivity() {
                                     )
                                 }
                                 AppTab.SPS -> {
-                                    PlaceholderTab(
-                                        title = "Точный SPS",
-                                        icon = Icons.Default.Speed,
-                                        description = "Модуль анализа скорости артикуляции (SPS), гистограммы слогов в секунду и контроля темпа караоке-дорожки.",
+                                    SpsTab(
+                                        syllables = uiState.syllables,
+                                        activeSyllableId = uiState.activeSyllableId,
+                                        spsStatistics = uiState.spsStatistics,
+                                        spsBursts = uiState.spsBursts,
+                                        selectedBurstId = uiState.selectedBurstId,
+                                        waveformData = uiState.waveformData,
+                                        spectrogramData = uiState.spectrogramData,
+                                        spectrogramView = uiState.spectrogramView,
+                                        timelineViewMode = uiState.timelineViewMode,
+                                        playbackPosition = uiState.playbackPosition,
+                                        duration = uiState.mediaDuration,
+                                        playbackSpeed = uiState.playbackSpeed,
+                                        preservePitch = uiState.playbackPreservePitch,
+                                        returnToStart = uiState.returnToStart,
+                                        isPlaying = uiState.isPlaying,
+                                        zoomLevel = uiState.zoomLevel,
+                                        scrollOffset = uiState.scrollOffset,
                                         palette = uiState.currentTheme,
-                                        onNavigateToKaraoke = { viewModel.selectTab(AppTab.KARAOKE) }
+                                        onReturnToKaraoke = { viewModel.selectTab(AppTab.KARAOKE) },
+                                        onSelectSyllable = { viewModel.selectSyllableForTrimming(it) },
+                                        onAdjustStart = { id, delta -> viewModel.adjustSyllableStart(id, delta) },
+                                        onAdjustEnd = { id, delta -> viewModel.adjustSyllableEnd(id, delta) },
+                                        onSnapStartToPrevious = { viewModel.snapStartToPrevious(it) },
+                                        onSnapEndToNext = { viewModel.snapEndToNext(it) },
+                                        onShiftJointBoundary = { id, delta -> viewModel.shiftJointBoundary(id, delta) },
+                                        onPreviewSyllable = { id, left, right -> viewModel.previewSyllableWithContext(id, left, right) },
+                                        onSelectBurst = { viewModel.selectBurst(it) },
+                                        onPlayPause = { viewModel.togglePlayback() },
+                                        onStop = { viewModel.stopPlayback() },
+                                        onSeek = { viewModel.seekTo(it) },
+                                        onZoomChange = { viewModel.setZoom(it) },
+                                        onScrollChange = { viewModel.setScroll(it) },
+                                        onTimelineViewModeChange = { viewModel.setTimelineViewMode(it) },
+                                        onShowSpeedDialog = { viewModel.showSpeedDialog() },
+                                        onToggleReturnToStart = { viewModel.toggleReturnToStart() }
                                     )
                                 }
                                 AppTab.RENDER -> {

@@ -157,7 +157,7 @@ fun InspectorPane(
 }
 
 @Composable
-private fun CompactTransportBar(
+fun CompactTransportBar(
     isPlaying: Boolean,
     playbackPosition: Double,
     duration: Double,
