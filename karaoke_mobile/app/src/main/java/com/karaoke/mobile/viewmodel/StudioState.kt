@@ -17,11 +17,24 @@ import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.BufferedReader
 import java.io.File
+import java.io.FileInputStream
 import java.io.InputStreamReader
 import java.util.UUID
 import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
+
+/**
+ * Краткая информация о сохранённом проекте
+ */
+data class ProjectSummary(
+    val id: String,
+    val name: String,
+    val modifiedAt: Long,
+    val subtitlePath: String? = null,
+    val mediaPath: String? = null
+)
 
 /**
  * Состояние UI студии
@@ -44,6 +57,8 @@ data class StudioUiState(
     val showThemePicker: Boolean = false,
     val showExportDialog: Boolean = false,
     val showImportDialog: Boolean = false,
+    val showProjectsDialog: Boolean = false,
+    val savedProjects: List<ProjectSummary> = emptyList(),
     val editTextId: String? = null,
     val editTextValue: String = "",
     val showTimingEditor: Boolean = false,
@@ -105,49 +120,129 @@ class StudioState : ViewModel() {
     fun loadProject(projectId: String, context: Context) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val projectFile = File(context.filesDir, "projects/$projectId/project.json")
+                val projectDir = File(context.filesDir, "projects/$projectId")
+                val projectFile = File(projectDir, "project.json")
                 if (!projectFile.exists()) {
-                    _events.emit(StudioEvent.ShowError("Проект не найден"))
+                    withContext(Dispatchers.Main) {
+                        _events.emit(StudioEvent.ShowError("Проект не найден"))
+                    }
                     return@launch
                 }
-                val json = JSONObject(projectFile.readText())
+                val json = JSONObject(projectFile.readText().removePrefix("\uFEFF"))
                 val project = KaraokeProject(
-                    id = json.getString("id"),
-                    name = json.getString("name"),
-                    mediaPath = json.optString("mediaPath").takeIf { it.isNotBlank() },
-                    subtitlePath = json.optString("subtitlePath").takeIf { it.isNotBlank() },
-                    createdAt = json.getLong("createdAt"),
-                    modifiedAt = json.getLong("modifiedAt")
+                    id = json.optString("id").takeIf { it.isNotBlank() } ?: projectId,
+                    name = json.optString("name").takeIf { it.isNotBlank() } ?: projectDir.name,
+                    mediaPath = json.optString("mediaPath").takeIf { it.isNotBlank() } ?: json.optString("media").takeIf { it.isNotBlank() },
+                    subtitlePath = json.optString("subtitlePath").takeIf { it.isNotBlank() } ?: json.optString("subtitles").takeIf { it.isNotBlank() },
+                    createdAt = json.optLong("createdAt", projectDir.lastModified()),
+                    modifiedAt = json.optLong("modifiedAt", System.currentTimeMillis())
                 )
 
                 var document = AssDocument()
                 var syllables = emptyList<KaraokeSyllable>()
 
-                project.subtitlePath?.let { path ->
-                    val file = File(path)
-                    if (file.exists()) {
-                        document = AssParser.parse(file.readText())
-                        syllables = document.events.flatMap { it.syllables }
-                    }
+                // Поиск файла субтитров (по абсолютному или относительному пути, либо первый .ass в папке)
+                val subFile = project.subtitlePath?.let { path ->
+                    File(path).takeIf { it.exists() } ?: File(projectDir, path).takeIf { it.exists() }
+                } ?: projectDir.listFiles()?.find { it.extension.equals("ass", ignoreCase = true) }
+
+                if (subFile != null && subFile.exists()) {
+                    document = AssParser.parse(subFile.readText().removePrefix("\uFEFF"))
+                    syllables = document.events.flatMap { it.syllables }
                 }
 
                 editor = AssEditor(syllables)
 
+                // Поиск медиафайла
+                val mediaFile = project.mediaPath?.let { path ->
+                    File(path).takeIf { it.exists() } ?: File(projectDir, path).takeIf { it.exists() }
+                }
+
                 withContext(Dispatchers.Main) {
+                    if (mediaFile != null && mediaFile.exists()) {
+                        setMediaFile(mediaFile)
+                    }
                     _uiState.value = _uiState.value.copy(
-                        project = project,
+                        project = project.copy(
+                            subtitlePath = subFile?.absolutePath,
+                            mediaPath = mediaFile?.absolutePath,
+                            document = document
+                        ),
                         document = document,
                         syllables = syllables,
                         selectedIds = emptySet(),
+                        activeSyllableId = null,
                         canUndo = editor.canUndo,
                         canRedo = editor.canRedo,
-                        successMessage = "Проект загружен"
+                        successMessage = "Проект «${project.name}» загружен"
                     )
+                    _events.emit(StudioEvent.ShowSuccess("Проект «${project.name}» загружен"))
                 }
             } catch (e: Exception) {
-                _events.emit(StudioEvent.ShowError("Ошибка загрузки: ${e.message}"))
+                withContext(Dispatchers.Main) {
+                    _events.emit(StudioEvent.ShowError("Ошибка загрузки: ${e.message}"))
+                }
             }
         }
+    }
+
+    fun showProjectsDialog(context: Context) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val projects = getSavedProjects(context)
+            withContext(Dispatchers.Main) {
+                _uiState.value = _uiState.value.copy(
+                    showProjectsDialog = true,
+                    savedProjects = projects
+                )
+            }
+        }
+    }
+
+    fun hideProjectsDialog() {
+        _uiState.value = _uiState.value.copy(showProjectsDialog = false)
+    }
+
+    fun deleteProject(projectId: String, context: Context) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val dir = File(context.filesDir, "projects/$projectId")
+            if (dir.exists()) {
+                dir.deleteRecursively()
+            }
+            val projects = getSavedProjects(context)
+            withContext(Dispatchers.Main) {
+                _uiState.value = _uiState.value.copy(savedProjects = projects)
+                _events.emit(StudioEvent.ShowSuccess("Проект удалён"))
+            }
+        }
+    }
+
+    fun getSavedProjects(context: Context): List<ProjectSummary> {
+        val projectsDir = File(context.filesDir, "projects")
+        if (!projectsDir.exists()) return emptyList()
+        val list = mutableListOf<ProjectSummary>()
+        projectsDir.listFiles()?.forEach { dir ->
+            if (dir.isDirectory) {
+                val projectJson = File(dir, "project.json")
+                if (projectJson.exists()) {
+                    try {
+                        val json = JSONObject(projectJson.readText().removePrefix("\uFEFF"))
+                        val name = json.optString("name").takeIf { it.isNotBlank() } ?: dir.name
+                        val id = json.optString("id").takeIf { it.isNotBlank() } ?: dir.name
+                        val modifiedAt = json.optLong("modifiedAt", dir.lastModified())
+                        val subPath = json.optString("subtitlePath").takeIf { it.isNotBlank() }
+                            ?: json.optString("subtitles").takeIf { it.isNotBlank() }
+                        val medPath = json.optString("mediaPath").takeIf { it.isNotBlank() }
+                            ?: json.optString("media").takeIf { it.isNotBlank() }
+                        list.add(ProjectSummary(id = id, name = name, modifiedAt = modifiedAt, subtitlePath = subPath, mediaPath = medPath))
+                    } catch (e: Exception) {
+                        list.add(ProjectSummary(id = dir.name, name = dir.name, modifiedAt = dir.lastModified()))
+                    }
+                } else {
+                    list.add(ProjectSummary(id = dir.name, name = dir.name, modifiedAt = dir.lastModified()))
+                }
+            }
+        }
+        return list.sortedByDescending { it.modifiedAt }
     }
 
     fun saveProject(context: Context) {
@@ -232,37 +327,111 @@ class StudioState : ViewModel() {
 
     fun importProject(context: Context, uri: Uri) {
         viewModelScope.launch(Dispatchers.IO) {
+            val projectId = UUID.randomUUID().toString()
+            val projectDir = File(context.filesDir, "projects/$projectId")
+            projectDir.mkdirs()
+
+            val tempZip = File(context.cacheDir, "import_${projectId}.zip")
+            val extractedFiles = mutableListOf<File>()
+
             try {
-                val projectId = UUID.randomUUID().toString()
-                val projectDir = File(context.filesDir, "projects/$projectId")
-                projectDir.mkdirs()
+                // 1. Надёжно считываем файл из ContentResolver в локальный файл кэша.
+                // Сначала пробуем openFileDescriptor (прямой доступ к дескриптору Android),
+                // если недоступен — обычный openInputStream.
+                var bytesCopied = 0L
+                try {
+                    val pfd = context.contentResolver.openFileDescriptor(uri, "r")
+                    if (pfd != null) {
+                        pfd.use { desc ->
+                            FileInputStream(desc.fileDescriptor).use { fis ->
+                                tempZip.outputStream().use { out ->
+                                    bytesCopied = fis.copyTo(out)
+                                }
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    // Игнорируем и пробуем openInputStream
+                }
 
-                val extractedFiles = mutableListOf<File>()
+                if (bytesCopied == 0L) {
+                    try {
+                        context.contentResolver.openInputStream(uri)?.use { stream ->
+                            tempZip.outputStream().use { out ->
+                                bytesCopied = stream.copyTo(out)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // ignore
+                    }
+                }
 
-                context.contentResolver.openInputStream(uri)?.use { rawInput ->
-                    ZipInputStream(BufferedInputStream(rawInput)).use { zip ->
-                        var entry = zip.nextEntry
-                        while (entry != null) {
+                if (!tempZip.exists() || tempZip.length() == 0L) {
+                    withContext(Dispatchers.Main) {
+                        _events.emit(StudioEvent.ShowError("Не удалось получить файл (размер 0 байт или нет доступа к хранилищу)"))
+                    }
+                    projectDir.deleteRecursively()
+                    return@launch
+                }
+
+                // 2. Распаковка через ZipFile (чтение таблицы Central Directory — надёжно для любых архивов)
+                var zipReadSuccess = false
+                try {
+                    ZipFile(tempZip).use { zipFile ->
+                        val entries = zipFile.entries()
+                        while (entries.hasMoreElements()) {
+                            val entry = entries.nextElement()
                             val entryName = entry.name
                             if (!entry.isDirectory && !entryName.startsWith("__MACOSX") && !File(entryName).name.startsWith("._")) {
                                 val cleanName = entryName.replace('\\', '/').trimStart('/')
                                 val outFile = File(projectDir, cleanName)
                                 outFile.parentFile?.mkdirs()
-                                outFile.outputStream().use { out ->
-                                    zip.copyTo(out)
+                                zipFile.getInputStream(entry).use { inStream ->
+                                    outFile.outputStream().use { outStream ->
+                                        inStream.copyTo(outStream)
+                                    }
                                 }
                                 extractedFiles.add(outFile)
                             }
-                            zip.closeEntry()
-                            entry = zip.nextEntry
                         }
+                    }
+                    zipReadSuccess = extractedFiles.isNotEmpty()
+                } catch (e: Exception) {
+                    // Пробуем потоковый fallback
+                }
+
+                // 3. Fallback через ZipInputStream, если ZipFile не смог прочитать архив
+                if (!zipReadSuccess) {
+                    try {
+                        FileInputStream(tempZip).use { fis ->
+                            ZipInputStream(BufferedInputStream(fis)).use { zis ->
+                                var entry = zis.nextEntry
+                                while (entry != null) {
+                                    val entryName = entry.name
+                                    if (!entry.isDirectory && !entryName.startsWith("__MACOSX") && !File(entryName).name.startsWith("._")) {
+                                        val cleanName = entryName.replace('\\', '/').trimStart('/')
+                                        val outFile = File(projectDir, cleanName)
+                                        outFile.parentFile?.mkdirs()
+                                        outFile.outputStream().use { out ->
+                                            zis.copyTo(out)
+                                        }
+                                        extractedFiles.add(outFile)
+                                    }
+                                    zis.closeEntry()
+                                    entry = zis.nextEntry
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // ignore
                     }
                 }
 
                 if (extractedFiles.isEmpty()) {
                     withContext(Dispatchers.Main) {
-                        _events.emit(StudioEvent.ShowError("Архив пуст или не удалось прочитать zip"))
+                        _events.emit(StudioEvent.ShowError("Архив пуст или не удалось прочитать zip (размер: ${tempZip.length()} байт)"))
                     }
+                    projectDir.deleteRecursively()
                     return@launch
                 }
 
@@ -405,6 +574,8 @@ class StudioState : ViewModel() {
                 withContext(Dispatchers.Main) {
                     _events.emit(StudioEvent.ShowError("Ошибка импорта: ${e.message ?: e.toString()}"))
                 }
+            } finally {
+                tempZip.delete()
             }
         }
     }

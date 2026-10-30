@@ -14,6 +14,7 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 
@@ -194,5 +195,56 @@ class ProjectZipTest {
         assertEquals("cu", syllables[3].text)
         assertEquals("ra\\N", syllables[4].text)
         assertEquals("Eu", syllables[5].text.trim())
+    }
+
+    @Test
+    fun testZipFileCentralDirectoryExtraction() {
+        val destDir = tempFolder.newFolder("zipfile_extracted")
+        val tempZipFile = tempFolder.newFile("archive_test.zip")
+
+        // 1. Write archive to file
+        ZipOutputStream(BufferedOutputStream(tempZipFile.outputStream())).use { zip ->
+            zip.putNextEntry(ZipEntry("project.json"))
+            zip.write("""{"name": "CD Test"}""".toByteArray())
+            zip.closeEntry()
+
+            zip.putNextEntry(ZipEntry("subtitles.ass"))
+            zip.write("[Script Info]\nTitle: Test\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,{\\k100}Hi".toByteArray())
+            zip.closeEntry()
+        }
+
+        assertTrue(tempZipFile.length() > 0L)
+
+        // 2. Extract using ZipFile central directory
+        val extractedFiles = mutableListOf<File>()
+        ZipFile(tempZipFile).use { zipFile ->
+            val entries = zipFile.entries()
+            while (entries.hasMoreElements()) {
+                val entry = entries.nextElement()
+                if (!entry.isDirectory) {
+                    val cleanName = entry.name.replace('\\', '/').trimStart('/')
+                    val outFile = File(destDir, cleanName)
+                    outFile.parentFile?.mkdirs()
+                    zipFile.getInputStream(entry).use { inStream ->
+                        outFile.outputStream().use { outStream ->
+                            inStream.copyTo(outStream)
+                        }
+                    }
+                    extractedFiles.add(outFile)
+                }
+            }
+        }
+
+        assertEquals(2, extractedFiles.size)
+        val projectJson = extractedFiles.find { it.name == "project.json" }
+        assertNotNull(projectJson)
+        val json = JSONObject(projectJson!!.readText())
+        assertEquals("CD Test", json.getString("name"))
+
+        val assFile = extractedFiles.find { it.name == "subtitles.ass" }
+        assertNotNull(assFile)
+        val doc = AssParser.parse(assFile!!.readText())
+        assertEquals(1, doc.events[0].syllables.size)
+        assertEquals("Hi", doc.events[0].syllables[0].text)
     }
 }

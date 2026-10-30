@@ -45,6 +45,7 @@ fun InspectorPane(
     onShowThemes: () -> Unit,
     onShowExport: () -> Unit,
     onShowImport: () -> Unit,
+    onOpenProjects: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -92,7 +93,8 @@ fun InspectorPane(
             onShowSettings = onShowSettings,
             onShowThemes = onShowThemes,
             onShowExport = onShowExport,
-            onShowImport = onShowImport
+            onShowImport = onShowImport,
+            onOpenProjects = onOpenProjects
         )
     }
 }
@@ -324,11 +326,12 @@ private fun FileToolbar(
     onShowSettings: () -> Unit,
     onShowThemes: () -> Unit,
     onShowExport: () -> Unit,
-    onShowImport: () -> Unit
+    onShowImport: () -> Unit,
+    onOpenProjects: () -> Unit
 ) {
     Column {
         Text(
-            text = "Файл",
+            text = "Проект и файл",
             color = palette.muted,
             fontSize = 12.sp,
             modifier = Modifier.padding(bottom = 4.dp)
@@ -339,14 +342,14 @@ private fun FileToolbar(
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             OutlinedButton(
-                onClick = onShowExport,
+                onClick = onOpenProjects,
                 modifier = Modifier.weight(1f),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = palette.fg),
                 border = ButtonDefaults.outlinedButtonBorder
             ) {
-                Icon(Icons.Default.Upload, contentDescription = "Export", modifier = Modifier.size(16.dp))
+                Icon(Icons.Default.FolderOpen, contentDescription = "Open", modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("Экспорт", fontSize = 11.sp)
+                Text("Проекты", fontSize = 11.sp)
             }
             OutlinedButton(
                 onClick = onShowImport,
@@ -357,6 +360,16 @@ private fun FileToolbar(
                 Icon(Icons.Default.Download, contentDescription = "Import", modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(4.dp))
                 Text("Импорт", fontSize = 11.sp)
+            }
+            OutlinedButton(
+                onClick = onShowExport,
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = palette.fg),
+                border = ButtonDefaults.outlinedButtonBorder
+            ) {
+                Icon(Icons.Default.Upload, contentDescription = "Export", modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Экспорт", fontSize = 11.sp)
             }
         }
 

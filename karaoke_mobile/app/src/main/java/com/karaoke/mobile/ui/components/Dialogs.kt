@@ -13,10 +13,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.window.Dialog
 import com.karaoke.mobile.model.KaraokeProject
 import com.karaoke.mobile.ui.theme.*
+import com.karaoke.mobile.viewmodel.ProjectSummary
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * Диалог выбора темы
@@ -333,6 +339,155 @@ fun MessageSnackbar(
                 fontSize = 14.sp,
                 fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
             )
+        }
+    }
+}
+
+/**
+ * Диалог со списком сохранённых проектов
+ */
+@Composable
+fun ProjectsListDialog(
+    projects: List<ProjectSummary>,
+    palette: KaraokeThemePalette,
+    onSelectProject: (String) -> Unit,
+    onDeleteProject: (String) -> Unit,
+    onImportZip: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = palette.panel)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Открыть проект",
+                        color = palette.fg,
+                        fontSize = 20.sp,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                    )
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Default.Close, contentDescription = "Закрыть", tint = palette.muted)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                if (projects.isEmpty()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.FolderOpen,
+                            contentDescription = null,
+                            tint = palette.muted,
+                            modifier = Modifier.size(48.dp)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Нет сохранённых проектов",
+                            color = palette.muted,
+                            fontSize = 14.sp
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Button(
+                            onClick = onImportZip,
+                            colors = ButtonDefaults.buttonColors(containerColor = palette.accent)
+                        ) {
+                            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Импортировать (.zip)", color = palette.accentFg)
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 320.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(projects) { project ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(palette.raised)
+                                    .clickable { onSelectProject(project.id) }
+                                    .padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.MusicNote,
+                                    contentDescription = null,
+                                    tint = palette.accent,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = project.name,
+                                        color = palette.fg,
+                                        fontSize = 15.sp,
+                                        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                    )
+                                    val dateStr = SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()).format(Date(project.modifiedAt))
+                                    Text(
+                                        text = dateStr,
+                                        color = palette.muted,
+                                        fontSize = 12.sp
+                                    )
+                                }
+                                IconButton(
+                                    onClick = { onDeleteProject(project.id) },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Delete,
+                                        contentDescription = "Удалить",
+                                        tint = palette.danger.copy(alpha = 0.8f),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedButton(
+                            onClick = onImportZip,
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = palette.fg),
+                            border = ButtonDefaults.outlinedButtonBorder
+                        ) {
+                            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Импорт ZIP", fontSize = 12.sp)
+                        }
+                        TextButton(onClick = onDismiss) {
+                            Text("Закрыть", color = palette.accent)
+                        }
+                    }
+                }
+            }
         }
     }
 }

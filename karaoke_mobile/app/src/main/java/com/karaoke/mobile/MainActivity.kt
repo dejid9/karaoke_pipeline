@@ -82,7 +82,17 @@ class MainActivity : ComponentActivity() {
     private val importProjectLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
-        uri?.let { viewModel.importProject(this, it) }
+        if (uri != null) {
+            try {
+                contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (e: Exception) {
+                // Ignore if not supported by provider
+            }
+            viewModel.importProject(this, uri)
+        }
     }
 
     private val importAssLauncher = registerForActivityResult(
@@ -139,7 +149,7 @@ class MainActivity : ComponentActivity() {
                                     viewModel.createNewProject("project-${System.currentTimeMillis()}", context)
                                 },
                                 onOpenProject = {
-                                    // TODO: показать список проектов
+                                    viewModel.showProjectsDialog(context)
                                 },
                                 onImportProject = {
                                     importProjectLauncher.launch(ZIP_MIME_TYPES)
@@ -153,12 +163,31 @@ class MainActivity : ComponentActivity() {
                             StudioScreen(
                                 uiState = uiState,
                                 viewModel = viewModel,
+                                context = context,
                                 onPickMedia = { pickMediaLauncher.launch(MEDIA_MIME_TYPES) },
                                 onPickAss = { pickAssLauncher.launch(ASS_MIME_TYPES) }
                             )
                         }
 
                         // Диалоги
+                        if (uiState.showProjectsDialog) {
+                            ProjectsListDialog(
+                                projects = uiState.savedProjects,
+                                palette = uiState.currentTheme,
+                                onSelectProject = { projectId ->
+                                    viewModel.loadProject(projectId, context)
+                                    viewModel.hideProjectsDialog()
+                                },
+                                onDeleteProject = { projectId ->
+                                    viewModel.deleteProject(projectId, context)
+                                },
+                                onImportZip = {
+                                    viewModel.hideProjectsDialog()
+                                    importProjectLauncher.launch(ZIP_MIME_TYPES)
+                                },
+                                onDismiss = { viewModel.hideProjectsDialog() }
+                            )
+                        }
                         if (uiState.showThemePicker) {
                             ThemePickerDialog(
                                 currentTheme = uiState.currentTheme,
@@ -249,6 +278,7 @@ class MainActivity : ComponentActivity() {
 private fun StudioScreen(
     uiState: StudioUiState,
     viewModel: StudioState,
+    context: Context,
     onPickMedia: () -> Unit,
     onPickAss: () -> Unit
 ) {
@@ -303,7 +333,8 @@ private fun StudioScreen(
             onShowSettings = { viewModel.showSettings() },
             onShowThemes = { viewModel.showThemePicker() },
             onShowExport = { viewModel.showExportDialog() },
-            onShowImport = { viewModel.showImportDialog() }
+            onShowImport = { viewModel.showImportDialog() },
+            onOpenProjects = { viewModel.showProjectsDialog(context) }
         )
 
         // Список слогов
