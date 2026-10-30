@@ -695,8 +695,9 @@ def extract_playback_pcm_cache(
     )
     stderr_lines: list[str] = []
     def read_err():
-        if proc.stderr is None: return
-        for line in proc.stderr:
+        proc_stderr = getattr(proc, "stderr", None)
+        if proc_stderr is None: return
+        for line in proc_stderr:
             line=line.rstrip()
             if line:
                 stderr_lines.append(line); _emit_log(log, line)
@@ -1941,6 +1942,12 @@ class MediaPlayer:
             raise FileNotFoundError(f"ffmpeg не найден: {ffmpeg_path}")
         ffplay_path = Path(ffplay).resolve() if ffplay is not None else None
         start = max(0.0, float(start)); end = max(start + 0.001, float(end)); speed = normalize_playback_speed(speed)
+        if (self._pcm_cache is None or self._pcm_media != media_path) and self.prepare_output() and self._pa_engine is not None:
+            try:
+                cache, _, _ = load_or_extract_playback_pcm_cache(media_path, ffmpeg=ffmpeg_path)
+                self.set_pcm_cache(media_path, cache)
+            except Exception:
+                pass
         if self._pcm_cache is not None and self._pcm_media == media_path and self.prepare_output() and self._pa_engine is not None:
             if self._follow_default_device:
                 try: self._pa_engine.refresh_default_output_device(force=False)
@@ -1968,6 +1975,12 @@ class MediaPlayer:
         media_path = Path(media).resolve(); ffmpeg_path = Path(ffmpeg).resolve()
         ffplay_path = Path(ffplay).resolve() if ffplay is not None else None
         start = max(0.0, float(start)); speed = normalize_playback_speed(speed)
+        if (self._pcm_cache is None or self._pcm_media != media_path) and self.prepare_output() and self._pa_engine is not None:
+            try:
+                cache, _, _ = load_or_extract_playback_pcm_cache(media_path, ffmpeg=ffmpeg_path)
+                self.set_pcm_cache(media_path, cache)
+            except Exception:
+                pass
         if self._pcm_cache is not None and self._pcm_media == media_path and self.prepare_output() and self._pa_engine is not None:
             if self._follow_default_device:
                 try: self._pa_engine.refresh_default_output_device(force=False)

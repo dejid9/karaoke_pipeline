@@ -2434,6 +2434,7 @@ class KaraokeApp(tk.Tk):
         self._invalidate_spectrogram()
         self._refresh_from_session(reset_view=True)
         self._ensure_waveform_async()
+        self._ensure_playback_cache_async()
         self._restore_project_state()
         if self.spectrogram_mode_var.get() != "Waveform":
             self._ensure_spectrogram_async()
@@ -2530,6 +2531,7 @@ class KaraokeApp(tk.Tk):
         if hasattr(self, "render_panel"):
             self.render_panel.refresh_source(reset_measurement=False)
         self._ensure_waveform_async()
+        self._ensure_playback_cache_async()
         if self.spectrogram_mode_var.get() != "Waveform":
             self._ensure_spectrogram_async()
         self._set_status(f"Медиа привязано: {path}")
