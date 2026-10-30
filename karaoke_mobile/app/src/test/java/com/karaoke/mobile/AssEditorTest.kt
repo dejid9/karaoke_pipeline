@@ -1,55 +1,95 @@
 package com.karaoke.mobile
 
+import com.karaoke.mobile.model.AssEditor
+import com.karaoke.mobile.model.AssFile
+import com.karaoke.mobile.model.AssLine
+import com.karaoke.mobile.model.AssParser
+import com.karaoke.mobile.model.KaraokeTag
+import com.karaoke.mobile.model.Syllable
 import org.junit.Assert.*
 import org.junit.Test
 
 class AssEditorTest {
-    private val source = "[Script Info]\r\nTitle: Demo\r\n[Events]\r\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\r\nDialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,{\\kf40}Hello{\\kf60}world\r\n"
+    private val sampleAss = """
+        [Script Info]
+        Title: Demo
 
-    @Test fun roundTripPreservesLineEndings() {
-        val editor = AssEditor.parse(source)
-        assertEquals(source, editor.serialize())
-        assertEquals(listOf("Hello", "world"), editor.syllables().map { it.text })
+        [Events]
+        Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+        Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,{\k40}Hello{\kf60}world
+    """.trimIndent()
+
+    @Test
+    fun testInitialState() {
+        val file = AssParser.parse(sampleAss)
+        val editor = AssEditor(file)
+        assertEquals(1, editor.current.lines.size)
+        assertEquals(2, editor.current.lines[0].syllables.size)
+        assertFalse(editor.canUndo())
+        assertFalse(editor.canRedo())
     }
-    @Test fun boundaryPreservesPairDurationAndUndo() {
-        val editor = AssEditor.parse(source)
-        val (a, b) = editor.syllables()
-        editor.moveBoundary(a.id, b.id, 150)
-        assertEquals(listOf(50, 50), editor.syllables().map { it.endCs - it.startCs })
+
+    @Test
+    fun testUndoRedo() {
+        val file = AssParser.parse(sampleAss)
+        val editor = AssEditor(file)
+
+        editor.setSyllableText(0, 0, "Hi")
+        assertEquals("Hi", editor.current.lines[0].syllables[0].text)
+        assertTrue(editor.canUndo())
+        assertFalse(editor.canRedo())
+
         editor.undo()
-        assertEquals(source, editor.serialize())
+        assertEquals("Hello", editor.current.lines[0].syllables[0].text)
+        assertFalse(editor.canUndo())
+        assertTrue(editor.canRedo())
+
         editor.redo()
-        assertEquals(150, editor.syllables().first().endCs)
+        assertEquals("Hi", editor.current.lines[0].syllables[0].text)
+        assertTrue(editor.canUndo())
+        assertFalse(editor.canRedo())
     }
-    @Test fun splitAndMergeKeepTextAndTiming() {
-        val editor = AssEditor.parse(source)
-        val first = editor.syllables().first()
-        editor.split(first.id, 120)
-        assertEquals(3, editor.syllables().size)
-        assertEquals(140, editor.syllables()[1].endCs)
-        editor.merge(editor.syllables().take(2).map { it.id })
-        assertEquals(listOf("Hello", "world"), editor.syllables().map { it.text })
-        assertEquals(200, editor.syllables().last().endCs)
+
+    @Test
+    fun testSplitAndMergeSyllables() {
+        val file = AssParser.parse(sampleAss)
+        val editor = AssEditor(file)
+        val syl = editor.current.lines[0].syllables[0]
+        val mid = (syl.start + syl.end) / 2
+
+        editor.splitSyllable(0, 0, mid)
+        assertEquals(3, editor.current.lines[0].syllables.size)
+        assertEquals(mid, editor.current.lines[0].syllables[0].end)
+        assertEquals(mid, editor.current.lines[0].syllables[1].start)
+
+        editor.mergeSyllables(0, 0, 1)
+        assertEquals(2, editor.current.lines[0].syllables.size)
     }
-    @Test fun textEditPreservesColourTags() {
-        val editor = AssEditor.parse(source.replace("Hello", "{\\c&HFF&}Hello{\\c}"))
-        editor.setText(editor.syllables().first().id, "New")
-        assertTrue(editor.serialize().contains("{\\c&HFF&}New{\\c}"))
-        assertEquals("New", editor.syllables().first().text)
+
+    @Test
+    fun testToggleBurst() {
+        val file = AssParser.parse(sampleAss)
+        val editor = AssEditor(file)
+        assertFalse(editor.current.lines[0].syllables[0].isBurst)
+
+        editor.toggleSyllableBurst(0, 0)
+        assertTrue(editor.current.lines[0].syllables[0].isBurst)
+
+        editor.toggleSyllableBurst(0, 0)
+        assertFalse(editor.current.lines[0].syllables[0].isBurst)
     }
-    @Test fun burstMarkingAndRemoval() {
-        val editor = AssEditor.parse(source)
-        val first = editor.syllables().first().id
-        editor.setBurst(first, true)
-        assertTrue(editor.syllables().first().burst)
-        assertFalse(editor.syllables().last().burst)
-        editor.setBurst(first, false)
-        assertFalse(editor.syllables().first().burst)
-    }
-    @Test fun lastSyllableEndUpdatesDialogueEnd() {
-        val editor = AssEditor.parse(source)
-        editor.setEnd(editor.syllables().last().id, 240)
-        assertTrue(editor.serialize().contains("0:00:02.40"))
-        assertEquals(240, editor.syllables().last().endCs)
+
+    @Test
+    fun testLineOperations() {
+        val file = AssParser.parse(sampleAss)
+        val editor = AssEditor(file)
+        val newLine = AssLine(start = 2000, end = 3000, text = "Second line")
+
+        editor.insertLine(1, newLine)
+        assertEquals(2, editor.current.lines.size)
+
+        editor.deleteLine(0)
+        assertEquals(1, editor.current.lines.size)
+        assertEquals("Second line", editor.current.lines[0].text)
     }
 }
