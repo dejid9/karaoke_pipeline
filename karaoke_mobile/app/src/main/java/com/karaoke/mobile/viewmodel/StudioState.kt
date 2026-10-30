@@ -1369,7 +1369,7 @@ class StudioState : ViewModel() {
             lang = _uiState.value.preparationLanguage
         )
         val syllables = doc.events.flatMap { it.syllables }
-        editor = AssEditor(doc)
+        editor = AssEditor(syllables)
         _uiState.value = _uiState.value.copy(
             document = doc,
             syllables = syllables,
@@ -1396,7 +1396,7 @@ class StudioState : ViewModel() {
                 )
                 val syllables = doc.events.flatMap { it.syllables }
                 withContext(Dispatchers.Main) {
-                    editor = AssEditor(doc)
+                    editor = AssEditor(syllables)
                     _uiState.value = _uiState.value.copy(
                         document = doc,
                         syllables = syllables,
