@@ -10,11 +10,64 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.karaoke.mobile.model.KaraokeTagType
 import com.karaoke.mobile.ui.theme.KaraokeThemePalette
+
+/**
+ * Значок вертикальной двусторонней стрелки ↕ с индикацией сохранения тона (перечёркнута).
+ */
+@Composable
+fun PitchArrowIcon(
+    preservePitch: Boolean,
+    tint: Color,
+    modifier: Modifier = Modifier
+) {
+    androidx.compose.foundation.Canvas(modifier = modifier.size(10.dp, 16.dp)) {
+        val w = size.width
+        val h = size.height
+        val midX = w / 2f
+
+        // Верхняя стрелка
+        val topPath = androidx.compose.ui.graphics.Path().apply {
+            moveTo(midX, 1f)
+            lineTo(midX - 3.5f, 5f)
+            lineTo(midX + 3.5f, 5f)
+            close()
+        }
+        drawPath(topPath, color = tint)
+
+        // Линия по центру
+        drawLine(
+            color = tint,
+            start = Offset(midX, 4f),
+            end = Offset(midX, h - 4f),
+            strokeWidth = 1.8f
+        )
+
+        // Нижняя стрелка
+        val bottomPath = androidx.compose.ui.graphics.Path().apply {
+            moveTo(midX, h - 1f)
+            lineTo(midX - 3.5f, h - 5f)
+            lineTo(midX + 3.5f, h - 5f)
+            close()
+        }
+        drawPath(bottomPath, color = tint)
+
+        // Если сохранение тона включено -> перечёркиваем диагональной красной чертой
+        if (preservePitch) {
+            drawLine(
+                color = Color(0xFFFF4855),
+                start = Offset(0f, h - 1f),
+                end = Offset(w, 1f),
+                strokeWidth = 2.0f
+            )
+        }
+    }
+}
 
 /**
  * Ультракомпактная панель управления плеером и редактированием.
@@ -24,6 +77,8 @@ fun InspectorPane(
     isPlaying: Boolean,
     playbackPosition: Double,
     playbackSpeed: Float,
+    preservePitch: Boolean = true,
+    returnToStart: Boolean = true,
     duration: Double,
     selectedCount: Int,
     canUndo: Boolean,
@@ -33,7 +88,8 @@ fun InspectorPane(
     onPlayPause: () -> Unit,
     onStop: () -> Unit,
     onSeek: (Double) -> Unit,
-    onSpeedChange: (Float) -> Unit,
+    onShowSpeedDialog: () -> Unit,
+    onToggleReturnToStart: () -> Unit,
     onUndo: () -> Unit,
     onRedo: () -> Unit,
     onSplit: () -> Unit,
@@ -53,17 +109,20 @@ fun InspectorPane(
             .padding(horizontal = 8.dp, vertical = 4.dp),
         verticalArrangement = Arrangement.spacedBy(3.dp)
     ) {
-        // 1. Компактный транспорт (Play/Pause, Stop, Slider, Time, Speed)
+        // 1. Компактный транспорт (Play/Pause, Stop, Возврат к старту, Slider, Time, Speed)
         CompactTransportBar(
             isPlaying = isPlaying,
             playbackPosition = playbackPosition,
             duration = duration,
             playbackSpeed = playbackSpeed,
+            preservePitch = preservePitch,
+            returnToStart = returnToStart,
             palette = palette,
             onPlayPause = onPlayPause,
             onStop = onStop,
             onSeek = onSeek,
-            onSpeedChange = onSpeedChange
+            onShowSpeedDialog = onShowSpeedDialog,
+            onToggleReturnToStart = onToggleReturnToStart
         )
 
         HorizontalDivider(color = palette.border.copy(alpha = 0.25f), thickness = 0.5.dp)
@@ -103,11 +162,14 @@ private fun CompactTransportBar(
     playbackPosition: Double,
     duration: Double,
     playbackSpeed: Float,
+    preservePitch: Boolean,
+    returnToStart: Boolean,
     palette: KaraokeThemePalette,
     onPlayPause: () -> Unit,
     onStop: () -> Unit,
     onSeek: (Double) -> Unit,
-    onSpeedChange: (Float) -> Unit
+    onShowSpeedDialog: () -> Unit,
+    onToggleReturnToStart: () -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -146,6 +208,34 @@ private fun CompactTransportBar(
             )
         }
 
+        // Кнопка-переключатель "Возврат к старту"
+        Surface(
+            onClick = onToggleReturnToStart,
+            shape = RoundedCornerShape(4.dp),
+            color = if (returnToStart) palette.accent.copy(alpha = 0.2f) else palette.raised,
+            border = BorderStroke(1.dp, if (returnToStart) palette.accent else palette.border.copy(alpha = 0.4f)),
+            modifier = Modifier.height(26.dp)
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Replay,
+                    contentDescription = "Возврат к старту",
+                    tint = if (returnToStart) palette.accent else palette.muted,
+                    modifier = Modifier.size(12.dp)
+                )
+                Text(
+                    text = "Возвр",
+                    color = if (returnToStart) palette.accent else palette.muted,
+                    fontSize = 9.sp,
+                    fontWeight = if (returnToStart) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal
+                )
+            }
+        }
+
         // Слайдер
         Slider(
             value = playbackPosition.toFloat().coerceIn(0f, duration.toFloat().coerceAtLeast(0.001f)),
@@ -171,34 +261,18 @@ private fun CompactTransportBar(
             maxLines = 1
         )
 
-        // Скорость
-        var speedMenuExpanded by remember { mutableStateOf(false) }
-        Box {
-            OutlinedButton(
-                onClick = { speedMenuExpanded = true },
-                contentPadding = PaddingValues(horizontal = 5.dp, vertical = 2.dp),
-                modifier = Modifier.height(24.dp),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = palette.accent),
-                border = BorderStroke(1.dp, palette.border.copy(alpha = 0.6f)),
-                shape = RoundedCornerShape(4.dp)
-            ) {
-                Text("${playbackSpeed}x", fontSize = 10.sp)
-            }
-            DropdownMenu(
-                expanded = speedMenuExpanded,
-                onDismissRequest = { speedMenuExpanded = false },
-                modifier = Modifier.background(palette.panel)
-            ) {
-                listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f).forEach { speed ->
-                    DropdownMenuItem(
-                        text = { Text("${speed}x", color = palette.fg, fontSize = 12.sp) },
-                        onClick = {
-                            onSpeedChange(speed)
-                            speedMenuExpanded = false
-                        }
-                    )
-                }
-            }
+        // Кнопка вызова окна скорости со значком сохранения тона (двусторонняя стрелка ↕)
+        OutlinedButton(
+            onClick = onShowSpeedDialog,
+            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 1.dp),
+            modifier = Modifier.height(26.dp),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = palette.accent),
+            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.6f)),
+            shape = RoundedCornerShape(4.dp)
+        ) {
+            PitchArrowIcon(preservePitch = preservePitch, tint = palette.accent)
+            Spacer(modifier = Modifier.width(3.dp))
+            Text("${playbackSpeed}x", fontSize = 10.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium)
         }
     }
 }

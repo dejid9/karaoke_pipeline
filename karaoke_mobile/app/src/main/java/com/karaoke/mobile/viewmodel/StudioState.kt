@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.karaoke.mobile.model.*
+import com.karaoke.mobile.ui.components.formatTime
 import com.karaoke.mobile.ui.theme.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -73,6 +74,16 @@ data class StudioUiState(
     val canvasWidth: Float = 0f,
     val showHelp: Boolean = false,
     val autoScroll: Boolean = true,
+    val returnToStart: Boolean = true,
+    val playbackPreservePitch: Boolean = true,
+    val showSpeedDialog: Boolean = false,
+    val selectedTab: AppTab = AppTab.KARAOKE,
+    val spectrogramAnalysis: SpectrogramAnalysisSettings = SpectrogramAnalysisSettings(),
+    val spectrogramView: SpectrogramViewSettings = SpectrogramViewSettings(),
+    val spectrogramData: SpectrogramData? = null,
+    val timelineViewMode: TimelineViewMode = TimelineViewMode.BOTH,
+    val logs: List<LogEntry> = listOf(LogEntry(message = "Приложение инициализировано")),
+    val playbackOrigin: Double = 0.0,
     val defaultTagType: KaraokeTagType = KaraokeTagType.K,
     val canUndo: Boolean = false,
     val canRedo: Boolean = false
@@ -881,15 +892,19 @@ class StudioState : ViewModel() {
                 setDataSource(file.absolutePath)
                 prepare()
                 setOnCompletionListener {
-                    _uiState.value = _uiState.value.copy(isPlaying = false, playbackPosition = 0.0)
+                    val targetPos = if (_uiState.value.returnToStart) _uiState.value.playbackOrigin else 0.0
+                    seekTo(targetPos)
+                    _uiState.value = _uiState.value.copy(isPlaying = false, playbackPosition = targetPos)
+                    addLog(LogLevel.INFO, "Воспроизведение завершено", "Player")
                 }
             }
-            _uiState.value = _uiState.value.copy(
-                mediaDuration = mediaPlayer?.duration?.toDouble()?.div(1000.0) ?: 0.0
-            )
+            val dur = mediaPlayer?.duration?.toDouble()?.div(1000.0) ?: 0.0
+            _uiState.value = _uiState.value.copy(mediaDuration = dur)
+            addLog(LogLevel.INFO, "Медиафайл открыт: ${file.name} (${formatTime(dur)})", "Media")
         } catch (e: Exception) {
             viewModelScope.launch {
                 _events.emit(StudioEvent.ShowError("Не удалось инициализировать аудио: ${e.message}"))
+                addLog(LogLevel.ERROR, "Ошибка инициализации медиа: ${e.message}", "Media")
             }
         }
     }
@@ -901,15 +916,20 @@ class StudioState : ViewModel() {
                 setDataSource(context, uri)
                 prepare()
                 setOnCompletionListener {
-                    _uiState.value = _uiState.value.copy(isPlaying = false, playbackPosition = 0.0)
+                    val targetPos = if (_uiState.value.returnToStart) _uiState.value.playbackOrigin else 0.0
+                    seekTo(targetPos)
+                    _uiState.value = _uiState.value.copy(isPlaying = false, playbackPosition = targetPos)
+                    addLog(LogLevel.INFO, "Воспроизведение завершено", "Player")
                 }
             }
-            _uiState.value = _uiState.value.copy(
-                mediaDuration = mediaPlayer?.duration?.toDouble()?.div(1000.0) ?: 0.0
-            )
+            val dur = mediaPlayer?.duration?.toDouble()?.div(1000.0) ?: 0.0
+            _uiState.value = _uiState.value.copy(mediaDuration = dur)
+            loadWaveform(uri, context)
+            addLog(LogLevel.INFO, "Медиа подключено: $uri", "Media")
         } catch (e: Exception) {
             viewModelScope.launch {
                 _events.emit(StudioEvent.ShowError("Не удалось открыть медиа: ${e.message}"))
+                addLog(LogLevel.ERROR, "Ошибка открытия медиа: ${e.message}", "Media")
             }
         }
     }
@@ -919,10 +939,13 @@ class StudioState : ViewModel() {
             if (player.isPlaying) {
                 player.pause()
                 _uiState.value = _uiState.value.copy(isPlaying = false)
+                addLog(LogLevel.ACTION, "Пауза на ${formatTime(_uiState.value.playbackPosition)}", "Player")
             } else {
+                val origin = _uiState.value.playbackPosition
                 player.start()
-                _uiState.value = _uiState.value.copy(isPlaying = true)
+                _uiState.value = _uiState.value.copy(isPlaying = true, playbackOrigin = origin)
                 startPlaybackPolling()
+                addLog(LogLevel.ACTION, "Старт воспроизведения с ${formatTime(origin)}", "Player")
             }
         }
     }
@@ -933,12 +956,94 @@ class StudioState : ViewModel() {
     }
 
     fun setPlaybackSpeed(speed: Float) {
-        mediaPlayer?.let {
+        val valid = (kotlin.math.round(speed * 100f) / 100f).coerceIn(0.25f, 3.0f)
+        applyPlaybackParams(valid, _uiState.value.playbackPreservePitch)
+        _uiState.value = _uiState.value.copy(playbackSpeed = valid)
+        addLog(LogLevel.ACTION, "Скорость: ${valid}x", "Player")
+    }
+
+    fun setPreservePitch(preserve: Boolean) {
+        applyPlaybackParams(_uiState.value.playbackSpeed, preserve)
+        _uiState.value = _uiState.value.copy(playbackPreservePitch = preserve)
+        addLog(LogLevel.ACTION, "Сохранение тона: ${if (preserve) "Вкл" else "Выкл"}", "Player")
+    }
+
+    private fun applyPlaybackParams(speed: Float, preservePitch: Boolean) {
+        mediaPlayer?.let { player ->
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-                it.playbackParams = it.playbackParams.setSpeed(speed)
+                try {
+                    val params = player.playbackParams
+                    params.speed = speed
+                    params.pitch = if (preservePitch) 1.0f else speed
+                    player.playbackParams = params
+                } catch (e: Exception) {
+                    // ignore unsupported pitch shifts
+                }
             }
         }
-        _uiState.value = _uiState.value.copy(playbackSpeed = speed)
+    }
+
+    fun setReturnToStart(enabled: Boolean) {
+        _uiState.value = _uiState.value.copy(returnToStart = enabled)
+        addLog(LogLevel.ACTION, "Возврат к старту: ${if (enabled) "Вкл" else "Выкл"}", "Player")
+    }
+
+    fun showSpeedDialog() {
+        _uiState.value = _uiState.value.copy(showSpeedDialog = true)
+    }
+
+    fun hideSpeedDialog() {
+        _uiState.value = _uiState.value.copy(showSpeedDialog = false)
+    }
+
+    fun selectTab(tab: AppTab) {
+        _uiState.value = _uiState.value.copy(selectedTab = tab)
+        addLog(LogLevel.ACTION, "Переход на вкладку: ${tab.title}", "Nav")
+    }
+
+    fun setTimelineViewMode(mode: TimelineViewMode) {
+        _uiState.value = _uiState.value.copy(timelineViewMode = mode)
+        addLog(LogLevel.ACTION, "Режим таймлайна: ${mode.title}", "Timeline")
+    }
+
+    fun updateSpectrogramSettings(analysis: SpectrogramAnalysisSettings, view: SpectrogramViewSettings) {
+        _uiState.value = _uiState.value.copy(
+            spectrogramAnalysis = analysis,
+            spectrogramView = view
+        )
+        if (_uiState.value.waveformData.isNotEmpty()) {
+            val totalSecs = _uiState.value.mediaDuration.coerceAtLeast(10.0)
+            val spg = SpectrogramExtractor.generateEstimatedSpectrogram(
+                _uiState.value.waveformData,
+                totalSecs,
+                analysis,
+                view
+            )
+            _uiState.value = _uiState.value.copy(spectrogramData = spg)
+        }
+        addLog(LogLevel.ACTION, "Настройки спектрограммы обновлены (FFT: ${analysis.fftSize})", "Settings")
+    }
+
+    fun addLog(level: LogLevel, message: String, tag: String = "Studio") {
+        val entry = LogEntry(level = level, tag = tag, message = message)
+        val updated = (_uiState.value.logs + entry).takeLast(500)
+        _uiState.value = _uiState.value.copy(logs = updated)
+    }
+
+    fun clearLogs() {
+        _uiState.value = _uiState.value.copy(logs = emptyList())
+    }
+
+    fun shareLogs(context: Context) {
+        val text = _uiState.value.logs.joinToString("\n") {
+            "${it.timeFormatted} [${it.level.label}] [${it.tag}] ${it.message}"
+        }
+        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(android.content.Intent.EXTRA_SUBJECT, "Karaoke Studio Logs")
+            putExtra(android.content.Intent.EXTRA_TEXT, text)
+        }
+        context.startActivity(android.content.Intent.createChooser(intent, "Поделиться логами"))
     }
 
     private var rangePlayJob: kotlinx.coroutines.Job? = null
@@ -1009,7 +1114,10 @@ class StudioState : ViewModel() {
     fun stopPlayback() {
         rangePlayJob?.cancel()
         mediaPlayer?.pause()
-        _uiState.value = _uiState.value.copy(isPlaying = false)
+        val targetPos = if (_uiState.value.returnToStart) _uiState.value.playbackOrigin else _uiState.value.playbackPosition
+        seekTo(targetPos)
+        _uiState.value = _uiState.value.copy(isPlaying = false, playbackPosition = targetPos)
+        addLog(LogLevel.ACTION, "Остановка воспроизведения (позиция: ${formatTime(targetPos)})", "Player")
     }
 
     // --- ASS ---
@@ -1026,17 +1134,40 @@ class StudioState : ViewModel() {
                 editor = AssEditor(syllables)
 
                 withContext(Dispatchers.Main) {
+                    val maxEnd = syllables.maxOfOrNull { it.end } ?: 120.0
+                    val currentWave = _uiState.value.waveformData
+                    val (wave, spg) = if (currentWave.isEmpty()) {
+                        val synth = (0..600).map { i ->
+                            val t = (i / 600.0) * maxEnd
+                            val inSyl = syllables.any { s -> t in s.start..s.end }
+                            if (inSyl) (0.25f + 0.65f * kotlin.math.abs(kotlin.math.sin(i * 0.35f))) else 0.04f
+                        }
+                        val s = SpectrogramExtractor.generateEstimatedSpectrogram(
+                            synth,
+                            maxEnd,
+                            _uiState.value.spectrogramAnalysis,
+                            _uiState.value.spectrogramView
+                        )
+                        synth to s
+                    } else {
+                        currentWave to _uiState.value.spectrogramData
+                    }
+
                     _uiState.value = _uiState.value.copy(
                         document = document,
                         syllables = syllables,
+                        waveformData = wave,
+                        spectrogramData = spg,
                         selectedIds = emptySet(),
                         canUndo = editor.canUndo,
                         canRedo = editor.canRedo,
-                        successMessage = "ASS загружен"
+                        successMessage = "ASS загружен (${syllables.size} сл.)"
                     )
+                    addLog(LogLevel.INFO, "Загружен ASS (${syllables.size} слогов, длительность ${formatTime(maxEnd)})", "ASS")
                 }
             } catch (e: Exception) {
                 _events.emit(StudioEvent.ShowError("Ошибка загрузки ASS: ${e.message}"))
+                addLog(LogLevel.ERROR, "Ошибка загрузки ASS: ${e.message}", "ASS")
             }
         }
     }
@@ -1125,10 +1256,22 @@ class StudioState : ViewModel() {
                 extractor.release()
 
                 withContext(Dispatchers.Main) {
-                    _uiState.value = _uiState.value.copy(waveformData = samples)
+                    val totalSecs = _uiState.value.mediaDuration.coerceAtLeast(10.0)
+                    val spg = SpectrogramExtractor.generateEstimatedSpectrogram(
+                        samples,
+                        totalSecs,
+                        _uiState.value.spectrogramAnalysis,
+                        _uiState.value.spectrogramView
+                    )
+                    _uiState.value = _uiState.value.copy(
+                        waveformData = samples,
+                        spectrogramData = spg
+                    )
+                    addLog(LogLevel.INFO, "Waveform и спектрограмма построены (${samples.size} отсчётов)", "Audio")
                 }
             } catch (e: Exception) {
                 _events.emit(StudioEvent.ShowError("Ошибка waveform: ${e.message}"))
+                addLog(LogLevel.ERROR, "Ошибка декодирования аудио: ${e.message}", "Audio")
             }
         }
     }

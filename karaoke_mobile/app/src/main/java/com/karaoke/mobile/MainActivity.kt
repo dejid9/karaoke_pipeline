@@ -12,6 +12,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -19,10 +21,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import com.karaoke.mobile.model.KaraokeTagType
+import com.karaoke.mobile.model.*
 import com.karaoke.mobile.ui.components.*
 import com.karaoke.mobile.viewmodel.StudioUiState
 import com.karaoke.mobile.ui.theme.KaraokeMobileTheme
@@ -143,132 +146,247 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        if (uiState.syllables.isEmpty() && uiState.project == null) {
-                            // Пустое состояние
-                            EmptyState(
-                                palette = uiState.currentTheme,
-                                onCreateProject = {
-                                    viewModel.createNewProject("project-${System.currentTimeMillis()}", context)
-                                },
-                                onOpenProject = {
-                                    viewModel.showProjectsDialog(context)
-                                },
-                                onImportProject = {
-                                    importProjectLauncher.launch(ZIP_MIME_TYPES)
-                                },
-                                onLoadAss = {
-                                    pickAssLauncher.launch(ASS_MIME_TYPES)
-                                }
-                            )
-                        } else {
-                            // Основной интерфейс студии
-                            StudioScreen(
-                                uiState = uiState,
-                                viewModel = viewModel,
-                                onPickMedia = { pickMediaLauncher.launch(MEDIA_MIME_TYPES) },
-                                onPickAss = { pickAssLauncher.launch(ASS_MIME_TYPES) }
-                            )
-                        }
-
-                        // Диалоги
-                        if (uiState.showProjectsDialog) {
-                            ProjectsListDialog(
-                                projects = uiState.savedProjects,
-                                palette = uiState.currentTheme,
-                                onSelectProject = { projectId ->
-                                    viewModel.loadProject(projectId, context)
-                                    viewModel.hideProjectsDialog()
-                                },
-                                onDeleteProject = { projectId ->
-                                    viewModel.deleteProject(projectId, context)
-                                },
-                                onImportZip = {
-                                    viewModel.hideProjectsDialog()
-                                    importProjectLauncher.launch(ZIP_MIME_TYPES)
-                                },
-                                onDismiss = { viewModel.hideProjectsDialog() }
-                            )
-                        }
-                        if (uiState.showSettings) {
-                            SettingsDialog(
-                                autoScroll = uiState.autoScroll,
-                                defaultTagType = uiState.defaultTagType,
-                                palette = uiState.currentTheme,
-                                onToggleAutoScroll = { viewModel.toggleAutoScroll() },
-                                onSetDefaultTagType = { viewModel.setDefaultTagType(it) },
-                                onOpenThemes = {
-                                    viewModel.hideSettings()
-                                    viewModel.showThemePicker()
-                                },
-                                onDismiss = { viewModel.hideSettings() }
-                            )
-                        }
-                        if (uiState.showThemePicker) {
-                            ThemePickerDialog(
-                                currentTheme = uiState.currentTheme,
-                                onThemeSelected = { viewModel.setTheme(it) },
-                                onDismiss = { viewModel.hideThemePicker() }
-                            )
-                        }
-
-                        if (uiState.showExportDialog) {
-                            ExportImportDialog(
-                                isExport = true,
-                                palette = uiState.currentTheme,
-                                onExportProject = {
-                                    exportProjectLauncher.launch("karaoke-project.zip")
-                                    viewModel.hideExportDialog()
-                                },
-                                onExportAss = {
-                                    exportAssLauncher.launch("subtitles.ass")
-                                    viewModel.hideExportDialog()
-                                },
-                                onImportProject = {},
-                                onImportAss = {},
-                                onDismiss = { viewModel.hideExportDialog() }
-                            )
-                        }
-
-                        if (uiState.showImportDialog) {
-                            ExportImportDialog(
-                                isExport = false,
-                                palette = uiState.currentTheme,
-                                onExportProject = {},
-                                onExportAss = {},
-                                onImportProject = {
-                                    importProjectLauncher.launch(ZIP_MIME_TYPES)
-                                    viewModel.hideImportDialog()
-                                },
-                                onImportAss = {
-                                    importAssLauncher.launch(ASS_MIME_TYPES)
-                                    viewModel.hideImportDialog()
-                                },
-                                onDismiss = { viewModel.hideImportDialog() }
-                            )
-                        }
-
-                        // Сообщения
-                        Box(
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(uiState.currentTheme.bg)
+                    ) {
+                        // Строка навигации по вкладкам приложения (как на ПК-версии)
+                        ScrollableTabRow(
+                            selectedTabIndex = AppTab.entries.indexOf(uiState.selectedTab).coerceAtLeast(0),
+                            containerColor = uiState.currentTheme.panel,
+                            contentColor = uiState.currentTheme.accent,
+                            edgePadding = 6.dp,
                             modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .padding(16.dp)
+                                .fillMaxWidth()
+                                .height(38.dp),
+                            divider = {
+                                HorizontalDivider(color = uiState.currentTheme.border.copy(alpha = 0.35f), thickness = 0.5.dp)
+                            }
                         ) {
-                            uiState.errorMessage?.let {
-                                MessageSnackbar(
-                                    message = it,
-                                    isError = true,
-                                    palette = uiState.currentTheme,
-                                    onDismiss = { viewModel.clearMessage() }
+                            AppTab.entries.forEach { tab ->
+                                val isSelected = tab == uiState.selectedTab
+                                val tabIcon = when (tab) {
+                                    AppTab.PREPARATION -> Icons.Default.Description
+                                    AppTab.KARAOKE -> Icons.Default.Mic
+                                    AppTab.SPS -> Icons.Default.Speed
+                                    AppTab.RENDER -> Icons.Default.Movie
+                                    AppTab.LOGS -> Icons.Default.Terminal
+                                }
+                                Tab(
+                                    selected = isSelected,
+                                    onClick = { viewModel.selectTab(tab) },
+                                    text = {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = tabIcon,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(13.dp),
+                                                tint = if (isSelected) uiState.currentTheme.accent else uiState.currentTheme.muted
+                                            )
+                                            Text(
+                                                text = tab.title,
+                                                color = if (isSelected) uiState.currentTheme.accent else uiState.currentTheme.muted,
+                                                fontSize = 11.sp,
+                                                fontWeight = if (isSelected) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal
+                                            )
+                                        }
+                                    }
                                 )
                             }
-                            uiState.successMessage?.let {
-                                MessageSnackbar(
-                                    message = it,
-                                    isError = false,
+                        }
+
+                        // Содержимое активной вкладки
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxWidth()
+                        ) {
+                            when (uiState.selectedTab) {
+                                AppTab.KARAOKE -> {
+                                    if (uiState.syllables.isEmpty() && uiState.project == null) {
+                                        // Пустое состояние
+                                        EmptyState(
+                                            palette = uiState.currentTheme,
+                                            onCreateProject = {
+                                                viewModel.createNewProject("project-${System.currentTimeMillis()}", context)
+                                            },
+                                            onOpenProject = {
+                                                viewModel.showProjectsDialog(context)
+                                            },
+                                            onImportProject = {
+                                                importProjectLauncher.launch(ZIP_MIME_TYPES)
+                                            },
+                                            onLoadAss = {
+                                                pickAssLauncher.launch(ASS_MIME_TYPES)
+                                            }
+                                        )
+                                    } else {
+                                        // Основной интерфейс студии
+                                        StudioScreen(
+                                            uiState = uiState,
+                                            viewModel = viewModel,
+                                            onPickMedia = { pickMediaLauncher.launch(MEDIA_MIME_TYPES) },
+                                            onPickAss = { pickAssLauncher.launch(ASS_MIME_TYPES) }
+                                        )
+                                    }
+                                }
+                                AppTab.LOGS -> {
+                                    LogsTab(
+                                        logs = uiState.logs,
+                                        palette = uiState.currentTheme,
+                                        onClear = { viewModel.clearLogs() },
+                                        onShare = { viewModel.shareLogs(context) }
+                                    )
+                                }
+                                AppTab.PREPARATION -> {
+                                    PlaceholderTab(
+                                        title = "Подготовка",
+                                        icon = Icons.Default.Description,
+                                        description = "Модуль предварительной подготовки текста песни, разбиения на слоги, романизации и фонетического выравнивания (MFA/IPA).",
+                                        palette = uiState.currentTheme,
+                                        onNavigateToKaraoke = { viewModel.selectTab(AppTab.KARAOKE) }
+                                    )
+                                }
+                                AppTab.SPS -> {
+                                    PlaceholderTab(
+                                        title = "Точный SPS",
+                                        icon = Icons.Default.Speed,
+                                        description = "Модуль анализа скорости артикуляции (SPS), гистограммы слогов в секунду и контроля темпа караоке-дорожки.",
+                                        palette = uiState.currentTheme,
+                                        onNavigateToKaraoke = { viewModel.selectTab(AppTab.KARAOKE) }
+                                    )
+                                }
+                                AppTab.RENDER -> {
+                                    PlaceholderTab(
+                                        title = "Рендер",
+                                        icon = Icons.Default.Movie,
+                                        description = "Пакетный экспорт субтитров в готовое видео караоке с кастомным оформлением, эффектами заливки и аудиодорожкой.",
+                                        palette = uiState.currentTheme,
+                                        onNavigateToKaraoke = { viewModel.selectTab(AppTab.KARAOKE) }
+                                    )
+                                }
+                            }
+
+                            // Диалоги
+                            if (uiState.showSpeedDialog) {
+                                PlaybackSpeedDialog(
+                                    speed = uiState.playbackSpeed,
+                                    preservePitch = uiState.playbackPreservePitch,
                                     palette = uiState.currentTheme,
-                                    onDismiss = { viewModel.clearMessage() }
+                                    onSpeedChange = { viewModel.setPlaybackSpeed(it) },
+                                    onPreservePitchChange = { viewModel.setPreservePitch(it) },
+                                    onDismiss = { viewModel.hideSpeedDialog() }
                                 )
+                            }
+                            if (uiState.showProjectsDialog) {
+                                ProjectsListDialog(
+                                    projects = uiState.savedProjects,
+                                    palette = uiState.currentTheme,
+                                    onSelectProject = { projectId ->
+                                        viewModel.loadProject(projectId, context)
+                                        viewModel.hideProjectsDialog()
+                                    },
+                                    onDeleteProject = { projectId ->
+                                        viewModel.deleteProject(projectId, context)
+                                    },
+                                    onImportZip = {
+                                        viewModel.hideProjectsDialog()
+                                        importProjectLauncher.launch(ZIP_MIME_TYPES)
+                                    },
+                                    onDismiss = { viewModel.hideProjectsDialog() }
+                                )
+                            }
+                            if (uiState.showSettings) {
+                                SettingsDialog(
+                                    autoScroll = uiState.autoScroll,
+                                    returnToStart = uiState.returnToStart,
+                                    timelineViewMode = uiState.timelineViewMode,
+                                    spectrogramAnalysis = uiState.spectrogramAnalysis,
+                                    spectrogramView = uiState.spectrogramView,
+                                    defaultTagType = uiState.defaultTagType,
+                                    palette = uiState.currentTheme,
+                                    onToggleAutoScroll = { viewModel.toggleAutoScroll() },
+                                    onToggleReturnToStart = { viewModel.setReturnToStart(!uiState.returnToStart) },
+                                    onSetTimelineViewMode = { viewModel.setTimelineViewMode(it) },
+                                    onUpdateSpectrogram = { a, v -> viewModel.updateSpectrogramSettings(a, v) },
+                                    onSetDefaultTagType = { viewModel.setDefaultTagType(it) },
+                                    onOpenThemes = {
+                                        viewModel.hideSettings()
+                                        viewModel.showThemePicker()
+                                    },
+                                    onDismiss = { viewModel.hideSettings() }
+                                )
+                            }
+                            if (uiState.showThemePicker) {
+                                ThemePickerDialog(
+                                    currentTheme = uiState.currentTheme,
+                                    onThemeSelected = { viewModel.setTheme(it) },
+                                    onDismiss = { viewModel.hideThemePicker() }
+                                )
+                            }
+
+                            if (uiState.showExportDialog) {
+                                ExportImportDialog(
+                                    isExport = true,
+                                    palette = uiState.currentTheme,
+                                    onExportProject = {
+                                        exportProjectLauncher.launch("karaoke-project.zip")
+                                        viewModel.hideExportDialog()
+                                    },
+                                    onExportAss = {
+                                        exportAssLauncher.launch("subtitles.ass")
+                                        viewModel.hideExportDialog()
+                                    },
+                                    onImportProject = {},
+                                    onImportAss = {},
+                                    onDismiss = { viewModel.hideExportDialog() }
+                                )
+                            }
+
+                            if (uiState.showImportDialog) {
+                                ExportImportDialog(
+                                    isExport = false,
+                                    palette = uiState.currentTheme,
+                                    onExportProject = {},
+                                    onExportAss = {},
+                                    onImportProject = {
+                                        importProjectLauncher.launch(ZIP_MIME_TYPES)
+                                        viewModel.hideImportDialog()
+                                    },
+                                    onImportAss = {
+                                        importAssLauncher.launch(ASS_MIME_TYPES)
+                                        viewModel.hideImportDialog()
+                                    },
+                                    onDismiss = { viewModel.hideImportDialog() }
+                                )
+                            }
+
+                            // Сообщения
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .padding(16.dp)
+                            ) {
+                                uiState.errorMessage?.let {
+                                    MessageSnackbar(
+                                        message = it,
+                                        isError = true,
+                                        palette = uiState.currentTheme,
+                                        onDismiss = { viewModel.clearMessage() }
+                                    )
+                                }
+                                uiState.successMessage?.let {
+                                    MessageSnackbar(
+                                        message = it,
+                                        isError = false,
+                                        palette = uiState.currentTheme,
+                                        onDismiss = { viewModel.clearMessage() }
+                                    )
+                                }
                             }
                         }
                     }
@@ -338,6 +456,9 @@ private fun StudioScreen(
                 Timeline(
                     syllables = uiState.syllables,
                     waveformData = uiState.waveformData,
+                    spectrogramData = uiState.spectrogramData,
+                    spectrogramView = uiState.spectrogramView,
+                    timelineViewMode = uiState.timelineViewMode,
                     playbackPosition = uiState.playbackPosition,
                     duration = totalDuration,
                     zoomLevel = uiState.zoomLevel,
@@ -351,6 +472,7 @@ private fun StudioScreen(
                     },
                     onZoomChange = { viewModel.setZoom(it) },
                     onScrollChange = { viewModel.setScroll(it) },
+                    onViewModeChange = { viewModel.setTimelineViewMode(it) },
                     onCanvasWidthChange = { viewModel.setCanvasWidth(it) },
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -360,6 +482,8 @@ private fun StudioScreen(
                     isPlaying = uiState.isPlaying,
                     playbackPosition = uiState.playbackPosition,
                     playbackSpeed = uiState.playbackSpeed,
+                    preservePitch = uiState.playbackPreservePitch,
+                    returnToStart = uiState.returnToStart,
                     duration = totalDuration,
                     selectedCount = uiState.selectedIds.size,
                     canUndo = uiState.canUndo,
@@ -369,7 +493,8 @@ private fun StudioScreen(
                     onPlayPause = { viewModel.togglePlayback() },
                     onStop = { viewModel.stopPlayback() },
                     onSeek = { viewModel.seekTo(it) },
-                    onSpeedChange = { viewModel.setPlaybackSpeed(it) },
+                    onShowSpeedDialog = { viewModel.showSpeedDialog() },
+                    onToggleReturnToStart = { viewModel.setReturnToStart(!uiState.returnToStart) },
                     onUndo = { viewModel.undo() },
                     onRedo = { viewModel.redo() },
                     onSplit = {
@@ -466,6 +591,9 @@ private fun StudioScreen(
             Timeline(
                 syllables = uiState.syllables,
                 waveformData = uiState.waveformData,
+                spectrogramData = uiState.spectrogramData,
+                spectrogramView = uiState.spectrogramView,
+                timelineViewMode = uiState.timelineViewMode,
                 playbackPosition = uiState.playbackPosition,
                 duration = totalDuration,
                 zoomLevel = uiState.zoomLevel,
@@ -479,6 +607,7 @@ private fun StudioScreen(
                 },
                 onZoomChange = { viewModel.setZoom(it) },
                 onScrollChange = { viewModel.setScroll(it) },
+                onViewModeChange = { viewModel.setTimelineViewMode(it) },
                 onCanvasWidthChange = { viewModel.setCanvasWidth(it) },
                 modifier = Modifier.fillMaxWidth()
             )
@@ -488,6 +617,8 @@ private fun StudioScreen(
                 isPlaying = uiState.isPlaying,
                 playbackPosition = uiState.playbackPosition,
                 playbackSpeed = uiState.playbackSpeed,
+                preservePitch = uiState.playbackPreservePitch,
+                returnToStart = uiState.returnToStart,
                 duration = totalDuration,
                 selectedCount = uiState.selectedIds.size,
                 canUndo = uiState.canUndo,
@@ -497,7 +628,8 @@ private fun StudioScreen(
                 onPlayPause = { viewModel.togglePlayback() },
                 onStop = { viewModel.stopPlayback() },
                 onSeek = { viewModel.seekTo(it) },
-                onSpeedChange = { viewModel.setPlaybackSpeed(it) },
+                onShowSpeedDialog = { viewModel.showSpeedDialog() },
+                onToggleReturnToStart = { viewModel.setReturnToStart(!uiState.returnToStart) },
                 onUndo = { viewModel.undo() },
                 onRedo = { viewModel.redo() },
                 onSplit = {

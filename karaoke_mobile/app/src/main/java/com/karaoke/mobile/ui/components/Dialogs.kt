@@ -7,7 +7,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -19,7 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.window.Dialog
-import com.karaoke.mobile.model.KaraokeTagType
+import com.karaoke.mobile.model.*
 import com.karaoke.mobile.ui.theme.*
 import com.karaoke.mobile.viewmodel.ProjectSummary
 import java.text.SimpleDateFormat
@@ -27,16 +29,15 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Диалог настроек редактора
+ * Диалог настроек скорости воспроизведения и сохранения тональности.
  */
 @Composable
-fun SettingsDialog(
-    autoScroll: Boolean,
-    defaultTagType: KaraokeTagType,
+fun PlaybackSpeedDialog(
+    speed: Float,
+    preservePitch: Boolean,
     palette: KaraokeThemePalette,
-    onToggleAutoScroll: () -> Unit,
-    onSetDefaultTagType: (KaraokeTagType) -> Unit,
-    onOpenThemes: () -> Unit,
+    onSpeedChange: (Float) -> Unit,
+    onPreservePitchChange: (Boolean) -> Unit,
     onDismiss: () -> Unit
 ) {
     Dialog(onDismissRequest = onDismiss) {
@@ -54,12 +55,15 @@ fun SettingsDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "Настройки",
-                        color = palette.fg,
-                        fontSize = 18.sp,
-                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Icon(Icons.Default.Speed, contentDescription = null, tint = palette.accent, modifier = Modifier.size(20.dp))
+                        Text(
+                            text = "Скорость воспроизведения",
+                            color = palette.fg,
+                            fontSize = 17.sp,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                        )
+                    }
                     IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
                         Icon(Icons.Default.Close, contentDescription = "Close", tint = palette.muted)
                     }
@@ -67,28 +71,112 @@ fun SettingsDialog(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // Автоскролл таймлайна
+                // Кнопки пресетов скорости
+                Text(text = "Пресеты скорости: %.2fx".format(speed), color = palette.fg, fontSize = 13.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium)
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f).forEach { s ->
+                        val isSel = kotlin.math.abs(speed - s) < 0.02f
+                        Button(
+                            onClick = { onSpeedChange(s) },
+                            modifier = Modifier.weight(1f).height(32.dp),
+                            contentPadding = PaddingValues(horizontal = 2.dp, vertical = 2.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isSel) palette.accent else palette.raised,
+                                contentColor = if (isSel) palette.accentFg else palette.fg
+                            ),
+                            border = BorderStroke(1.dp, if (isSel) palette.accentAlt else palette.border.copy(alpha = 0.5f)),
+                            shape = RoundedCornerShape(6.dp)
+                        ) {
+                            Text("${s}x", fontSize = 11.sp, fontWeight = if (isSel) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal)
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Слайдер точной регулировки
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = { onSpeedChange((speed - 0.05f).coerceIn(0.25f, 3.0f)) },
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                        modifier = Modifier.height(26.dp).width(32.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = palette.fg),
+                        border = BorderStroke(1.dp, palette.border.copy(alpha = 0.7f)),
+                        shape = RoundedCornerShape(4.dp)
+                    ) {
+                        Text("-", fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    }
+
+                    Slider(
+                        value = speed.coerceIn(0.25f, 3.0f),
+                        onValueChange = { onSpeedChange(it) },
+                        valueRange = 0.25f..3.0f,
+                        colors = SliderDefaults.colors(
+                            thumbColor = palette.accent,
+                            activeTrackColor = palette.accent,
+                            inactiveTrackColor = palette.raised
+                        ),
+                        modifier = Modifier.weight(1f).height(20.dp)
+                    )
+
+                    OutlinedButton(
+                        onClick = { onSpeedChange((speed + 0.05f).coerceIn(0.25f, 3.0f)) },
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                        modifier = Modifier.height(26.dp).width(32.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = palette.fg),
+                        border = BorderStroke(1.dp, palette.border.copy(alpha = 0.7f)),
+                        shape = RoundedCornerShape(4.dp)
+                    ) {
+                        Text("+", fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    }
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = palette.border.copy(alpha = 0.3f))
+
+                // Переключатель "Сохранять тон"
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                text = "Сохранять тон",
+                                color = palette.fg,
+                                fontSize = 14.sp,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
+                            )
+                            Surface(
+                                shape = RoundedCornerShape(3.dp),
+                                color = if (preservePitch) palette.accent.copy(alpha = 0.2f) else palette.raised,
+                                border = BorderStroke(0.5.dp, if (preservePitch) palette.accent else palette.border.copy(alpha = 0.5f))
+                            ) {
+                                Text(
+                                    text = if (preservePitch) "Тон фиксирован (↕ перечёркнута)" else "Тон меняется (↕)",
+                                    color = if (preservePitch) palette.accent else palette.muted,
+                                    fontSize = 10.sp,
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                )
+                            }
+                        }
                         Text(
-                            text = "Автоскролл таймлайна",
-                            color = palette.fg,
-                            fontSize = 14.sp,
-                            fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
-                        )
-                        Text(
-                            text = "Следовать за курсором при воспроизведении",
+                            text = "Высота голоса не искажается при изменении темпа",
                             color = palette.muted,
                             fontSize = 11.sp
                         )
                     }
                     Switch(
-                        checked = autoScroll,
-                        onCheckedChange = { onToggleAutoScroll() },
+                        checked = preservePitch,
+                        onCheckedChange = { onPreservePitchChange(it) },
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = palette.accentFg,
                             checkedTrackColor = palette.accent,
@@ -98,71 +186,269 @@ fun SettingsDialog(
                     )
                 }
 
-                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = palette.border.copy(alpha = 0.3f))
+                Spacer(modifier = Modifier.height(14.dp))
 
-                // Дефолтный тег караоке
-                Text(
-                    text = "Тег по умолчанию для новых слогов",
-                    color = palette.fg,
-                    fontSize = 14.sp,
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
-                )
-                Spacer(modifier = Modifier.height(6.dp))
+                Button(
+                    onClick = onDismiss,
+                    modifier = Modifier.align(Alignment.End).height(34.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.accent, contentColor = palette.accentFg),
+                    shape = RoundedCornerShape(6.dp)
+                ) {
+                    Text("Готово", fontSize = 12.sp)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Диалог настроек редактора
+ */
+@Composable
+fun SettingsDialog(
+    autoScroll: Boolean,
+    returnToStart: Boolean,
+    timelineViewMode: TimelineViewMode,
+    spectrogramAnalysis: SpectrogramAnalysisSettings,
+    spectrogramView: SpectrogramViewSettings,
+    defaultTagType: KaraokeTagType,
+    palette: KaraokeThemePalette,
+    onToggleAutoScroll: () -> Unit,
+    onToggleReturnToStart: () -> Unit,
+    onSetTimelineViewMode: (TimelineViewMode) -> Unit,
+    onUpdateSpectrogram: (SpectrogramAnalysisSettings, SpectrogramViewSettings) -> Unit,
+    onSetDefaultTagType: (KaraokeTagType) -> Unit,
+    onOpenThemes: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.88f)
+                .padding(12.dp),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = palette.panel),
+            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.6f))
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp)
+            ) {
+                // Заголовок
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    KaraokeTagType.entries.forEach { tagType ->
-                        val isSelected = tagType == defaultTagType
-                        val label = when (tagType) {
-                            KaraokeTagType.K -> "\\k"
-                            KaraokeTagType.KF -> "\\kf"
-                            KaraokeTagType.KO -> "\\ko"
-                            KaraokeTagType.K_CAPITAL -> "\\K"
-                        }
-                        Button(
-                            onClick = { onSetDefaultTagType(tagType) },
-                            modifier = Modifier.weight(1f).height(32.dp),
-                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isSelected) palette.accent else palette.raised,
-                                contentColor = if (isSelected) palette.accentFg else palette.fg
-                            ),
-                            border = BorderStroke(1.dp, if (isSelected) palette.accentAlt else palette.border.copy(alpha = 0.5f)),
-                            shape = RoundedCornerShape(6.dp)
-                        ) {
-                            Text(label, fontSize = 12.sp, fontWeight = if (isSelected) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal)
-                        }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Icon(Icons.Default.Settings, contentDescription = null, tint = palette.accent, modifier = Modifier.size(20.dp))
+                        Text(
+                            text = "Настройки",
+                            color = palette.fg,
+                            fontSize = 18.sp,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                        )
+                    }
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Default.Close, contentDescription = "Close", tint = palette.muted)
                     }
                 }
 
-                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = palette.border.copy(alpha = 0.3f))
+                Spacer(modifier = Modifier.height(8.dp))
 
-                // Выбор темы оформления
-                OutlinedButton(
-                    onClick = onOpenThemes,
-                    modifier = Modifier.fillMaxWidth().height(38.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        containerColor = Color.Transparent,
-                        contentColor = palette.fg
-                    ),
-                    border = BorderStroke(1.dp, palette.border.copy(alpha = 0.6f)),
-                    shape = RoundedCornerShape(6.dp)
+                // Скроллируемое тело настроек
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(Icons.Default.Palette, contentDescription = null, tint = palette.accent, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Сменить цветовую тему (${palette.name})", fontSize = 12.sp)
+                    // Раздел 1: Воспроизведение
+                    Text("Воспроизведение и таймлайн", color = palette.accent, fontSize = 12.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+
+                    // Автоскролл
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Автоскролл таймлайна", color = palette.fg, fontSize = 13.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium)
+                            Text("Начинается при проходе 85% видимой области", color = palette.muted, fontSize = 11.sp)
+                        }
+                        Switch(
+                            checked = autoScroll,
+                            onCheckedChange = { onToggleAutoScroll() },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = palette.accentFg,
+                                checkedTrackColor = palette.accent,
+                                uncheckedThumbColor = palette.muted,
+                                uncheckedTrackColor = palette.raised
+                            )
+                        )
+                    }
+
+                    // Возврат к старту
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Возврат к старту", color = palette.fg, fontSize = 13.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium)
+                            Text("Возвращать курсор на точку старта при остановке", color = palette.muted, fontSize = 11.sp)
+                        }
+                        Switch(
+                            checked = returnToStart,
+                            onCheckedChange = { onToggleReturnToStart() },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = palette.accentFg,
+                                checkedTrackColor = palette.accent,
+                                uncheckedThumbColor = palette.muted,
+                                uncheckedTrackColor = palette.raised
+                            )
+                        )
+                    }
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = palette.border.copy(alpha = 0.3f))
+
+                    // Раздел 2: Спектрограмма и вейвформа
+                    Text("Спектрограмма и вейвформа", color = palette.accent, fontSize = 12.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+
+                    // Режим отображения дорожки
+                    Text("Режим таймлайна:", color = palette.fg, fontSize = 12.sp)
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TimelineViewMode.entries.forEach { mode ->
+                            val isSel = mode == timelineViewMode
+                            Button(
+                                onClick = { onSetTimelineViewMode(mode) },
+                                modifier = Modifier.weight(1f).height(30.dp),
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isSel) palette.accent else palette.raised,
+                                    contentColor = if (isSel) palette.accentFg else palette.fg
+                                ),
+                                border = BorderStroke(1.dp, if (isSel) palette.accentAlt else palette.border.copy(alpha = 0.5f)),
+                                shape = RoundedCornerShape(4.dp)
+                            ) {
+                                Text(mode.title, fontSize = 11.sp, fontWeight = if (isSel) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal)
+                            }
+                        }
+                    }
+
+                    // FFT Size
+                    Text("Размер БПФ (FFT size): ${spectrogramAnalysis.fftSize}", color = palette.fg, fontSize = 12.sp)
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        listOf(128, 256, 512, 1024).forEach { size ->
+                            val isSel = spectrogramAnalysis.fftSize == size
+                            OutlinedButton(
+                                onClick = { onUpdateSpectrogram(spectrogramAnalysis.copy(fftSize = size), spectrogramView) },
+                                modifier = Modifier.weight(1f).height(28.dp),
+                                contentPadding = PaddingValues(horizontal = 2.dp, vertical = 1.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    containerColor = if (isSel) palette.accent.copy(alpha = 0.2f) else Color.Transparent,
+                                    contentColor = if (isSel) palette.accent else palette.fg
+                                ),
+                                border = BorderStroke(1.dp, if (isSel) palette.accent else palette.border.copy(alpha = 0.5f)),
+                                shape = RoundedCornerShape(4.dp)
+                            ) {
+                                Text("$size", fontSize = 11.sp, fontWeight = if (isSel) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal)
+                            }
+                        }
+                    }
+
+                    // Частотный диапазон (80 - 5000 Гц)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Частоты (Гц):", color = palette.muted, fontSize = 11.sp)
+                        Text(
+                            "%.0f — %.0f Гц (scale: %s)".format(spectrogramView.minFrequency, spectrogramView.maxFrequency, spectrogramView.frequencyScale),
+                            color = palette.fg,
+                            fontSize = 11.sp,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
+                        )
+                    }
+
+                    // Динамический диапазон в дБ
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Уровни (дБ):", color = palette.muted, fontSize = 11.sp)
+                        Text(
+                            "%.0f ... %.0f дБ (SR: %d, overlap: %.0f%%)".format(
+                                spectrogramView.dbFloor,
+                                spectrogramView.dbCeiling,
+                                spectrogramAnalysis.sampleRate,
+                                spectrogramAnalysis.overlap * 100
+                            ),
+                            color = palette.fg,
+                            fontSize = 11.sp,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
+                        )
+                    }
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = palette.border.copy(alpha = 0.3f))
+
+                    // Раздел 3: Субтитры
+                    Text("Субтитры", color = palette.accent, fontSize = 12.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    Text("Тег по умолчанию:", color = palette.fg, fontSize = 12.sp)
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        KaraokeTagType.entries.forEach { tagType ->
+                            val isSelected = tagType == defaultTagType
+                            val label = when (tagType) {
+                                KaraokeTagType.K -> "\\k"
+                                KaraokeTagType.KF -> "\\kf"
+                                KaraokeTagType.KO -> "\\ko"
+                                KaraokeTagType.K_CAPITAL -> "\\K"
+                            }
+                            Button(
+                                onClick = { onSetDefaultTagType(tagType) },
+                                modifier = Modifier.weight(1f).height(30.dp),
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isSelected) palette.accent else palette.raised,
+                                    contentColor = if (isSelected) palette.accentFg else palette.fg
+                                ),
+                                border = BorderStroke(1.dp, if (isSelected) palette.accentAlt else palette.border.copy(alpha = 0.5f)),
+                                shape = RoundedCornerShape(4.dp)
+                            ) {
+                                Text(label, fontSize = 12.sp, fontWeight = if (isSelected) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal)
+                            }
+                        }
+                    }
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = palette.border.copy(alpha = 0.3f))
+
+                    // Раздел 4: Оформление
+                    Text("Оформление", color = palette.accent, fontSize = 12.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    OutlinedButton(
+                        onClick = onOpenThemes,
+                        modifier = Modifier.fillMaxWidth().height(36.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.Transparent, contentColor = palette.fg),
+                        border = BorderStroke(1.dp, palette.border.copy(alpha = 0.6f)),
+                        shape = RoundedCornerShape(6.dp)
+                    ) {
+                        Icon(Icons.Default.Palette, contentDescription = null, tint = palette.accent, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Сменить цветовую тему (${palette.name})", fontSize = 12.sp)
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Text(
+                        text = "Karaoke Mobile Studio • v1.1",
+                        color = palette.muted.copy(alpha = 0.7f),
+                        fontSize = 11.sp,
+                        modifier = Modifier.align(Alignment.CenterHorizontally)
+                    )
                 }
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // Информация о приложении
-                Text(
-                    text = "Karaoke Mobile Studio • v1.0",
-                    color = palette.muted.copy(alpha = 0.7f),
-                    fontSize = 11.sp,
-                    modifier = Modifier.align(Alignment.CenterHorizontally)
-                )
 
                 Spacer(modifier = Modifier.height(8.dp))
 

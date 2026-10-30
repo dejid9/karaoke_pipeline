@@ -153,15 +153,62 @@ private fun SyllableItem(
                 }
 
                 if (!isEditing) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                        IconButton(onClick = onStartEdit, modifier = Modifier.size(24.dp)) {
-                            Icon(Icons.Default.Edit, contentDescription = "Edit", tint = palette.muted, modifier = Modifier.size(15.dp))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // 1. Изменить текст и параметры (увеличенная кнопка)
+                        Surface(
+                            onClick = onStartEdit,
+                            shape = RoundedCornerShape(8.dp),
+                            color = palette.raised,
+                            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.6f)),
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = "Изменить текст",
+                                    tint = palette.fg,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
-                        IconButton(onClick = onStartTimingEdit, modifier = Modifier.size(24.dp)) {
-                            Icon(Icons.Default.Schedule, contentDescription = "Timing", tint = palette.accent, modifier = Modifier.size(15.dp))
+
+                        // 2. Тайминг (увеличенная кнопка)
+                        Surface(
+                            onClick = onStartTimingEdit,
+                            shape = RoundedCornerShape(8.dp),
+                            color = palette.accent.copy(alpha = 0.18f),
+                            border = BorderStroke(1.dp, palette.accent.copy(alpha = 0.5f)),
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Schedule,
+                                    contentDescription = "Тайминг",
+                                    tint = palette.accent,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
-                        IconButton(onClick = onDelete, modifier = Modifier.size(24.dp)) {
-                            Icon(Icons.Default.Delete, contentDescription = "Delete", tint = palette.danger.copy(alpha = 0.7f), modifier = Modifier.size(15.dp))
+
+                        // 3. Удалить слог (увеличенная кнопка с красным акцентом)
+                        Surface(
+                            onClick = onDelete,
+                            shape = RoundedCornerShape(8.dp),
+                            color = palette.danger.copy(alpha = 0.15f),
+                            border = BorderStroke(1.dp, palette.danger.copy(alpha = 0.5f)),
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = "Удалить слог",
+                                    tint = palette.danger,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
                     }
                 }

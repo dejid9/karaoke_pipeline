@@ -27,7 +27,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.karaoke.mobile.model.KaraokeSyllable
+import com.karaoke.mobile.model.*
 import com.karaoke.mobile.ui.theme.KaraokeThemePalette
 import kotlin.math.max
 
@@ -230,6 +230,9 @@ fun OverviewTimeline(
 fun Timeline(
     syllables: List<KaraokeSyllable>,
     waveformData: List<Float>,
+    spectrogramData: SpectrogramData? = null,
+    spectrogramView: SpectrogramViewSettings = SpectrogramViewSettings(),
+    timelineViewMode: TimelineViewMode = TimelineViewMode.BOTH,
     playbackPosition: Double,
     duration: Double,
     zoomLevel: Float,
@@ -241,6 +244,7 @@ fun Timeline(
     onSelectSyllable: (String) -> Unit,
     onZoomChange: (Float) -> Unit,
     onScrollChange: (Float) -> Unit,
+    onViewModeChange: (TimelineViewMode) -> Unit = {},
     onCanvasWidthChange: (Float) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -320,25 +324,43 @@ fun Timeline(
             val visibleStart = (scrollOffset / pixelsPerSecond).toDouble()
             val visibleEnd = ((scrollOffset + canvasWidth) / pixelsPerSecond).toDouble()
 
-            // Сетка времени
+            // 1. Спектрограмма (фоновый тепловой спектр)
+            if (timelineViewMode == TimelineViewMode.SPECTROGRAM || timelineViewMode == TimelineViewMode.BOTH) {
+                drawSpectrogram(
+                    spectrogramData = spectrogramData,
+                    visibleStart = visibleStart,
+                    visibleEnd = visibleEnd,
+                    pixelsPerSecond = pixelsPerSecond,
+                    scrollOffset = scrollOffset,
+                    canvasHeight = size.height,
+                    view = spectrogramView
+                )
+            }
+
+            // 2. Сетка времени
             drawTimeGrid(
                 visibleStart = visibleStart,
                 visibleEnd = visibleEnd,
                 pixelsPerSecond = pixelsPerSecond,
                 scrollOffset = scrollOffset,
                 canvasHeight = size.height,
-                color = palette.grid
+                color = if (timelineViewMode == TimelineViewMode.SPECTROGRAM) palette.grid.copy(alpha = 0.4f) else palette.grid
             )
 
-            // Waveform
-            drawWaveform(
-                waveformData = waveformData,
-                duration = duration,
-                pixelsPerSecond = pixelsPerSecond,
-                scrollOffset = scrollOffset,
-                canvasHeight = size.height,
-                color = palette.accent.copy(alpha = 0.35f)
-            )
+            // 3. Waveform (форма волны)
+            if (timelineViewMode == TimelineViewMode.WAVEFORM || timelineViewMode == TimelineViewMode.BOTH) {
+                drawWaveform(
+                    waveformData = waveformData,
+                    duration = duration,
+                    pixelsPerSecond = pixelsPerSecond,
+                    scrollOffset = scrollOffset,
+                    canvasHeight = size.height,
+                    color = if (timelineViewMode == TimelineViewMode.BOTH)
+                        palette.accent.copy(alpha = 0.55f)
+                    else
+                        palette.accent.copy(alpha = 0.35f)
+                )
+            }
 
             // Слоги
             val textPaint = Paint().apply {
@@ -417,13 +439,45 @@ fun Timeline(
             }
         }
 
-        // Кнопки зума (+) и (-) в правом верхнем углу
+        // Панель режимов (Волна / Спектр / Обе) и зума (+) / (-)
         Row(
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(4.dp),
-            horizontalArrangement = Arrangement.spacedBy(2.dp)
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
+            // Переключатель режимов отображения
+            Surface(
+                shape = RoundedCornerShape(4.dp),
+                color = palette.panel.copy(alpha = 0.92f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, palette.border.copy(alpha = 0.5f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(1.dp),
+                    horizontalArrangement = Arrangement.spacedBy(1.dp)
+                ) {
+                    TimelineViewMode.entries.forEach { mode ->
+                        val isSel = mode == timelineViewMode
+                        Surface(
+                            onClick = { onViewModeChange(mode) },
+                            shape = RoundedCornerShape(3.dp),
+                            color = if (isSel) palette.accent else Color.Transparent,
+                            modifier = Modifier.height(22.dp)
+                        ) {
+                            Text(
+                                text = mode.title,
+                                color = if (isSel) palette.accentFg else palette.muted,
+                                fontSize = 9.sp,
+                                fontWeight = if (isSel) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Зум (+) и (-)
             Surface(
                 shape = RoundedCornerShape(4.dp),
                 color = palette.panel.copy(alpha = 0.9f),
@@ -472,6 +526,56 @@ fun Timeline(
                 .fillMaxWidth()
                 .height(timeHeight)
         )
+    }
+}
+
+private fun DrawScope.drawSpectrogram(
+    spectrogramData: SpectrogramData?,
+    visibleStart: Double,
+    visibleEnd: Double,
+    pixelsPerSecond: Float,
+    scrollOffset: Float,
+    canvasHeight: Float,
+    view: SpectrogramViewSettings
+) {
+    if (spectrogramData == null || spectrogramData.frames.isEmpty()) return
+    val frames = spectrogramData.frames
+    val frameDur = spectrogramData.frameDurationSec.coerceAtLeast(0.005)
+
+    val startFrame = (visibleStart / frameDur).toInt().coerceIn(0, frames.size - 1)
+    val endFrame = (visibleEnd / frameDur).toInt().coerceIn(0, frames.size - 1)
+    val numBins = spectrogramData.numBins
+    if (numBins <= 0) return
+
+    val binFreqStep = (spectrogramData.sampleRate / 2f) / numBins
+    val minBin = (view.minFrequency / binFreqStep).toInt().coerceIn(0, numBins - 1)
+    val maxBin = (view.maxFrequency / binFreqStep).toInt().coerceIn(minBin + 1, numBins)
+    val visibleBins = (maxBin - minBin).coerceAtLeast(1)
+
+    val frameWidthPx = (frameDur * pixelsPerSecond).toFloat().coerceAtLeast(2f)
+    val binHeightPx = (canvasHeight / visibleBins).coerceAtLeast(1f)
+
+    for (fIdx in startFrame..endFrame) {
+        val frame = frames[fIdx]
+        val timeSec = fIdx * frameDur
+        val x = (timeSec * pixelsPerSecond - scrollOffset).toFloat()
+        if (x + frameWidthPx < 0 || x > size.width) continue
+
+        for (b in minBin until maxBin) {
+            val db = frame.getOrNull(b) ?: view.dbFloor
+            val norm = ((db - view.dbFloor) / (view.dbCeiling - view.dbFloor)).coerceIn(0f, 1f)
+            val color = SpectrogramColorMap.getColor(norm)
+
+            // Частоты снизу вверх (низкие частоты внизу холста, высокие вверху)
+            val binIdxFromBottom = b - minBin
+            val y = canvasHeight - (binIdxFromBottom + 1) * binHeightPx
+
+            drawRect(
+                color = color,
+                topLeft = Offset(x, y.coerceAtLeast(0f)),
+                size = Size(frameWidthPx, binHeightPx)
+            )
+        }
     }
 }
 
