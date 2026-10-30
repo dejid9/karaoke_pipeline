@@ -211,6 +211,7 @@ class StudioState : ViewModel() {
         playbackPositionMs = pos
     }
 
+    @JvmName("updatePlaybackSpeed")
     fun setPlaybackSpeed(speed: Float) {
         playbackSpeed = speed.coerceIn(0.5f, 1.5f)
         mediaPlayer?.let {
