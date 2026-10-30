@@ -31,12 +31,8 @@ class ProjectZipTest {
         ZipOutputStream(BufferedOutputStream(baos)).use { zip ->
             // project.json
             zip.putNextEntry(ZipEntry("my_project/project.json"))
-            val json = JSONObject().apply {
-                put("name", "Test Song")
-                put("media", "source/audio.mp3")
-                put("subtitles", "subtitles/track.ass")
-            }
-            zip.write(json.toString().toByteArray())
+            val jsonStr = """{"name": "Test Song", "media": "source/audio.mp3", "subtitles": "subtitles/track.ass"}"""
+            zip.write(jsonStr.toByteArray())
             zip.closeEntry()
 
             // subtitles/track.ass
