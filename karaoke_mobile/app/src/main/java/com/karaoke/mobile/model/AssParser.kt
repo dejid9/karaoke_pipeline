@@ -143,19 +143,6 @@ object AssParser {
             }
         }
 
-        // Если остался текст после последнего тега
-        val lastMatch = matches.last()
-        val remainingStart = lastMatch.range.last + 1
-        if (remainingStart < text.length) {
-            val remaining = text.substring(remainingStart).removeAssTags().trim()
-            if (remaining.isNotEmpty()) {
-                val lastSyllable = syllables.last()
-                syllables[syllables.size - 1] = lastSyllable.copy(
-                    text = lastSyllable.text + remaining
-                )
-            }
-        }
-
         return syllables
     }
 
