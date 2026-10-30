@@ -19,6 +19,8 @@ env/
 dist/
 build/
 *.egg-info/
+.gradle/
+.zed/
 
 # Large media files and temporary test renders
 *.mp4

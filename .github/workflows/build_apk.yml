@@ -1,85 +1,120 @@
-name: Build Android APK (Karaoke Mobile)
+name: Build Karaoke Mobile APK
 
 on:
   push:
-    branches: [ main, master ]
-    tags: [ 'v*' ]
+    branches: [main, master]
+    paths:
+      - 'karaoke_mobile/**'
+      - '.github/workflows/build_apk.yml'
+    tags: ['v*']
+  pull_request:
+    paths:
+      - 'karaoke_mobile/**'
   workflow_dispatch:
 
 jobs:
-  build-android:
+  android:
     runs-on: ubuntu-22.04
-
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: karaoke_mobile
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Java 17
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: '17'
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 35
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
         with:
-          python-version: '3.11'
+          gradle-version: '8.9'
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
 
-      - name: Install dependencies and Flet CLI
-        run: |
-          python -m pip install --upgrade pip
-          pip install "flet[all]>=1.0.5" "flet-audio>=1.0.5"
+      - name: Run unit tests
+        run: gradle :app:testDebugUnitTest --no-daemon --stacktrace
 
-      - name: Configure Gradle and pre-fetch bridge binaries
-        run: |
-          mkdir -p ~/.gradle
-          cat << 'EOF' > ~/.gradle/gradle.properties
-          org.gradle.parallel=false
-          org.gradle.workers.max=1
-          org.gradle.jvmargs=-Xmx3072m -XX:MaxMetaspaceSize=1024m
-          EOF
+      - name: Assemble debug APK
+        run: gradle :app:assembleDebug --no-daemon --stacktrace
 
-          python - << 'EOF'
-          import os, pathlib, urllib.request
-          from flet_cli.utils.python_versions import get_default_python_version
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: karaoke_mobile/app/build/reports/tests/
+          retention-days: 7
 
-          bridge_dir = pathlib.Path("${{ runner.temp }}/dart_bridge")
-          bridge_dir.mkdir(parents=True, exist_ok=True)
-          version = "1.10.0"
-          try:
-              py_ver = get_default_python_version()
-          except Exception:
-              py_ver = "3.14"
-
-          print(f"Target python version for dart-bridge: {py_ver}")
-          for abi in ["arm64-v8a", "armeabi-v7a", "x86_64"]:
-              filename = f"libdart_bridge-android-{abi}-py{py_ver}.so"
-              url = f"https://github.com/flet-dev/dart-bridge/releases/download/v{version}/{filename}"
-              dest = bridge_dir / filename
-              print(f"Pre-fetching {filename}...")
-              urllib.request.urlretrieve(url, dest)
-              print(f"-> Saved {dest} ({dest.stat().st_size} bytes)")
-          EOF
-
-      - name: Build Android APK
-        working-directory: karaoke_mobile
-        env:
-          SERIOUS_PYTHON_DART_BRIDGE_DIST: ${{ runner.temp }}/dart_bridge
-          GRADLE_OPTS: "-Dorg.gradle.parallel=false -Dorg.gradle.workers.max=1"
-        run: |
-          flet build apk src -o build/apk --project KaraokeMobile --arch arm64-v8a --android-permissions android.permission.READ_EXTERNAL_STORAGE=true android.permission.READ_MEDIA_AUDIO=true --yes --no-rich-output
-
-      - name: Upload APK artifact
+      - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: KaraokeMobile-APK
-          path: karaoke_mobile/build/apk/*.apk
+          name: KaraokeMobile-debug-APK
+          path: karaoke_mobile/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
           retention-days: 14
 
-      - name: Create GitHub Release (on tag)
-        if: startsWith(github.ref, 'refs/tags/v')
+  release:
+    runs-on: ubuntu-22.04
+    needs: android
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: karaoke_mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 35
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Assemble release APK
+        run: gradle :app:assembleRelease --no-daemon
+
+      - name: Sign release APK
+        uses: r0adkll/sign-android-release@v1
+        with:
+          releaseDirectory: karaoke_mobile/app/build/outputs/apk/release
+          signingKeyBase64: ${{ secrets.SIGNING_KEY }}
+          alias: ${{ secrets.ALIAS }}
+          keyStorePassword: ${{ secrets.KEY_STORE_PASSWORD }}
+          keyPassword: ${{ secrets.KEY_PASSWORD }}
+        env:
+          BUILD_TOOLS_VERSION: "35.0.0"
+
+      - name: Upload release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: KaraokeMobile-release-APK
+          path: karaoke_mobile/app/build/outputs/apk/release/*-signed.apk
+          retention-days: 30
+
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: karaoke_mobile/build/apk/*.apk
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          files: karaoke_mobile/app/build/outputs/apk/release/*-signed.apk
+          generate_release_notes: true
