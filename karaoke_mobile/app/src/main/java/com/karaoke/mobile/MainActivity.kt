@@ -188,6 +188,20 @@ class MainActivity : ComponentActivity() {
                                 onDismiss = { viewModel.hideProjectsDialog() }
                             )
                         }
+                        if (uiState.showSettings) {
+                            SettingsDialog(
+                                autoScroll = uiState.autoScroll,
+                                defaultTagType = uiState.defaultTagType,
+                                palette = uiState.currentTheme,
+                                onToggleAutoScroll = { viewModel.toggleAutoScroll() },
+                                onSetDefaultTagType = { viewModel.setDefaultTagType(it) },
+                                onOpenThemes = {
+                                    viewModel.hideSettings()
+                                    viewModel.showThemePicker()
+                                },
+                                onDismiss = { viewModel.hideSettings() }
+                            )
+                        }
                         if (uiState.showThemePicker) {
                             ThemePickerDialog(
                                 currentTheme = uiState.currentTheme,
@@ -305,6 +319,10 @@ private fun StudioScreen(
             modifier = Modifier.fillMaxWidth()
         )
 
+        // Активный слог для отображения в панели инспектора
+        val activeSyllable = uiState.syllables.firstOrNull { it.id == uiState.activeSyllableId }
+            ?: uiState.syllables.firstOrNull { it.id in uiState.selectedIds }
+
         // Инспектор / панель управления
         InspectorPane(
             isPlaying = uiState.isPlaying,
@@ -317,6 +335,8 @@ private fun StudioScreen(
             canUndo = uiState.canUndo,
             canRedo = uiState.canRedo,
             palette = uiState.currentTheme,
+            activeTagType = activeSyllable?.tagType ?: uiState.defaultTagType,
+            isCurrentUnspoken = activeSyllable?.isUnspoken ?: false,
             onPlayPause = { viewModel.togglePlayback() },
             onStop = { viewModel.stopPlayback() },
             onSeek = { viewModel.seekTo(it) },

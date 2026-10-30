@@ -1,34 +1,41 @@
 package com.karaoke.mobile.ui.components
 
+import android.graphics.Paint
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.karaoke.mobile.model.KaraokeSyllable
 import com.karaoke.mobile.ui.theme.KaraokeThemePalette
 import kotlin.math.max
-import kotlin.math.min
 
 /**
  * Визуальный таймлайн с waveform и слогами.
- * Портирован из karaoke_gui/timeline.py
+ * Поддерживает pinch-to-zoom, панорамирование (скролл) и тап для поиска/выделения.
  */
 @Composable
 fun Timeline(
@@ -47,39 +54,68 @@ fun Timeline(
     onScrollChange: (Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val density = LocalDensity.current
-    val canvasHeight = 180.dp
-    val timeHeight = 24.dp
+    val canvasHeight = 90.dp
+    val timeHeight = 18.dp
     val totalHeight = canvasHeight + timeHeight
 
     var canvasWidth by remember { mutableFloatStateOf(0f) }
     val pixelsPerSecond = 50f * zoomLevel
     val totalWidth = (duration * pixelsPerSecond).toFloat()
 
+    // Запоминаем актуальные состояния для жестов (предотвращает захват устаревших замыканий)
+    val curZoom by rememberUpdatedState(zoomLevel)
+    val curScroll by rememberUpdatedState(scrollOffset)
+    val curDuration by rememberUpdatedState(duration)
+    val curWidth by rememberUpdatedState(canvasWidth)
+    val curSyllables by rememberUpdatedState(syllables)
+    val curOnSeek by rememberUpdatedState(onSeek)
+    val curOnSelect by rememberUpdatedState(onSelectSyllable)
+    val curOnZoomChange by rememberUpdatedState(onZoomChange)
+    val curOnScrollChange by rememberUpdatedState(onScrollChange)
+
     Box(modifier = modifier.fillMaxWidth().height(totalHeight)) {
-        // Canvas с waveform и слогами
+        // Основной Canvas с waveform и слогами
         Canvas(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(canvasHeight)
                 .background(palette.canvas)
-                .pointerInput(zoomLevel, scrollOffset) {
+                .pointerInput(Unit) {
                     detectTapGestures { offset ->
-                        val time = ((offset.x + scrollOffset) / pixelsPerSecond).toDouble()
-                        onSeek(time.coerceIn(0.0, duration))
+                        val pps = 50f * curZoom
+                        val clickTime = ((offset.x + curScroll) / pps).toDouble()
+                        val hit = curSyllables.firstOrNull { s ->
+                            clickTime in s.start..s.end
+                        }
+                        if (hit != null) {
+                            curOnSelect(hit.id)
+                        } else {
+                            curOnSeek(clickTime.coerceIn(0.0, curDuration))
+                        }
                     }
                 }
                 .pointerInput(Unit) {
-                    detectDragGestures { change, dragAmount ->
-                        change.consume()
-                        if (kotlin.math.abs(dragAmount.x) > kotlin.math.abs(dragAmount.y)) {
-                            // Horizontal drag - scroll
-                            val newScroll = (scrollOffset - dragAmount.x).coerceIn(0f, max(0f, totalWidth - canvasWidth))
-                            onScrollChange(newScroll)
-                        } else {
-                            // Vertical drag - zoom
-                            val zoomDelta = dragAmount.y * 0.01f
-                            onZoomChange((zoomLevel - zoomDelta).coerceIn(0.5f, 10f))
+                    detectTransformGestures(panZoomLock = false) { centroid, pan, zoom, _ ->
+                        val pps = 50f * curZoom
+                        val effectiveTotalWidth = (curDuration * pps).toFloat()
+                        val maxScroll = max(0f, effectiveTotalWidth - curWidth)
+
+                        // 1. Zoom (pinch)
+                        if (kotlin.math.abs(zoom - 1f) > 0.005f) {
+                            val newZoom = (curZoom * zoom).coerceIn(0.25f, 20f)
+                            val newPps = 50f * newZoom
+                            // Зум относительно точки касания (centroid)
+                            val anchorTime = (curScroll + centroid.x) / pps
+                            val newScroll = (anchorTime * newPps - centroid.x)
+                                .coerceIn(0f, max(0f, (curDuration * newPps - curWidth).toFloat()))
+                            curOnZoomChange(newZoom)
+                            curOnScrollChange(newScroll)
+                        }
+
+                        // 2. Pan (скролл)
+                        if (kotlin.math.abs(pan.x) > 0.1f) {
+                            val newScroll = (curScroll - pan.x).coerceIn(0f, maxScroll)
+                            curOnScrollChange(newScroll)
                         }
                     }
                 }
@@ -88,17 +124,7 @@ fun Timeline(
             val visibleStart = (scrollOffset / pixelsPerSecond).toDouble()
             val visibleEnd = ((scrollOffset + canvasWidth) / pixelsPerSecond).toDouble()
 
-            // Рисуем waveform
-            drawWaveform(
-                waveformData = waveformData,
-                duration = duration,
-                pixelsPerSecond = pixelsPerSecond,
-                scrollOffset = scrollOffset,
-                canvasHeight = size.height,
-                color = palette.accent.copy(alpha = 0.3f)
-            )
-
-            // Рисуем сетку времени
+            // Сетка времени
             drawTimeGrid(
                 visibleStart = visibleStart,
                 visibleEnd = visibleEnd,
@@ -108,7 +134,24 @@ fun Timeline(
                 color = palette.grid
             )
 
-            // Рисуем слоги
+            // Waveform
+            drawWaveform(
+                waveformData = waveformData,
+                duration = duration,
+                pixelsPerSecond = pixelsPerSecond,
+                scrollOffset = scrollOffset,
+                canvasHeight = size.height,
+                color = palette.accent.copy(alpha = 0.35f)
+            )
+
+            // Слоги
+            val textPaint = Paint().apply {
+                color = palette.fg.toArgb()
+                textSize = 24f
+                isAntiAlias = true
+                textAlign = Paint.Align.Left
+            }
+
             syllables.forEach { syllable ->
                 val x = (syllable.start * pixelsPerSecond - scrollOffset).toFloat()
                 val width = (syllable.duration * pixelsPerSecond).toFloat()
@@ -118,65 +161,120 @@ fun Timeline(
                 val isActive = syllable.id == activeSyllableId
 
                 val bgColor = when {
-                    isActive -> palette.accent
-                    isSelected -> palette.selection.copy(alpha = 0.5f)
-                    syllable.isUnspoken -> palette.muted.copy(alpha = 0.3f)
-                    else -> palette.raised.copy(alpha = 0.5f)
+                    isActive -> palette.accent.copy(alpha = 0.85f)
+                    isSelected -> palette.selection.copy(alpha = 0.6f)
+                    syllable.isUnspoken -> palette.muted.copy(alpha = 0.25f)
+                    else -> palette.raised.copy(alpha = 0.55f)
                 }
 
                 val borderColor = when {
                     isActive -> palette.accentAlt
                     isSelected -> palette.accent
-                    else -> palette.border.copy(alpha = 0.3f)
+                    else -> palette.border.copy(alpha = 0.4f)
                 }
+
+                val topY = 10f
+                val boxHeight = size.height - 20f
 
                 // Фон слога
                 drawRect(
                     color = bgColor,
-                    topLeft = Offset(x, 20f),
-                    size = Size(width.coerceAtLeast(2f), size.height - 40f)
+                    topLeft = Offset(x, topY),
+                    size = Size(width.coerceAtLeast(2f), boxHeight)
                 )
 
-                // Граница
+                // Рамка слога
                 drawRect(
                     color = borderColor,
-                    topLeft = Offset(x, 20f),
-                    size = Size(width.coerceAtLeast(2f), size.height - 40f),
-                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1f)
+                    topLeft = Offset(x, topY),
+                    size = Size(width.coerceAtLeast(2f), boxHeight),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = if (isActive || isSelected) 2f else 1f)
                 )
 
-                // Текст слога (если достаточно места)
-                if (width > 30f) {
-                    // Текст рисуется через drawContext, но для простоты пропускаем
-                    // В реальном приложении используйте Text на Canvas или overlay
+                // Текст слога внутри блока (если блок достаточно широкий)
+                if (width > 24f) {
+                    val rawText = syllable.displayText
+                    val textToDraw = if (rawText.length > 8) rawText.take(7) + "…" else rawText
+                    drawContext.canvas.nativeCanvas.drawText(
+                        textToDraw,
+                        x + 4f,
+                        topY + boxHeight / 2f + 8f,
+                        textPaint
+                    )
                 }
             }
 
-            // Playhead
+            // Playhead (текущая позиция воспроизведения)
             val playheadX = (playbackPosition * pixelsPerSecond - scrollOffset).toFloat()
             if (playheadX in 0f..canvasWidth) {
                 drawLine(
                     color = palette.danger,
                     start = Offset(playheadX, 0f),
                     end = Offset(playheadX, size.height),
-                    strokeWidth = 2f
+                    strokeWidth = 2.5f
                 )
-                // Треугольник наверху
                 drawCircle(
                     color = palette.danger,
-                    radius = 6f,
-                    center = Offset(playheadX, 6f)
+                    radius = 5f,
+                    center = Offset(playheadX, 5f)
                 )
             }
         }
 
-        // Шкала времени
-        TimeRuler(
+        // Кнопки зума (+) и (-) в правом верхнем углу
+        Row(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(4.dp),
+                color = palette.panel.copy(alpha = 0.85f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, palette.border.copy(alpha = 0.5f))
+            ) {
+                IconButton(
+                    onClick = { onZoomChange((zoomLevel * 1.3f).coerceIn(0.25f, 20f)) },
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "Zoom In",
+                        tint = palette.fg,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+            Surface(
+                shape = RoundedCornerShape(4.dp),
+                color = palette.panel.copy(alpha = 0.85f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, palette.border.copy(alpha = 0.5f))
+            ) {
+                IconButton(
+                    onClick = { onZoomChange((zoomLevel / 1.3f).coerceIn(0.25f, 20f)) },
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Remove,
+                        contentDescription = "Zoom Out",
+                        tint = palette.fg,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+        }
+
+        // Шкала времени (TimeRuler на Canvas)
+        TimeRulerCanvas(
             visibleStart = (scrollOffset / pixelsPerSecond).toDouble(),
             visibleEnd = ((scrollOffset + canvasWidth) / pixelsPerSecond).toDouble(),
             pixelsPerSecond = pixelsPerSecond,
+            scrollOffset = scrollOffset,
             palette = palette,
-            modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth().height(timeHeight)
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .fillMaxWidth()
+                .height(timeHeight)
         )
     }
 }
@@ -193,7 +291,7 @@ private fun DrawScope.drawWaveform(
 
     val samplesPerPixel = (waveformData.size / (duration * pixelsPerSecond)).toFloat().coerceAtLeast(1f)
     val centerY = canvasHeight / 2f
-    val amplitude = (canvasHeight - 40f) / 2f
+    val amplitude = (canvasHeight - 24f) / 2f
 
     val startPixel = (scrollOffset / pixelsPerSecond * samplesPerPixel).toInt().coerceAtLeast(0)
     val endPixel = ((scrollOffset + size.width) / pixelsPerSecond * samplesPerPixel).toInt()
@@ -234,7 +332,7 @@ private fun DrawScope.drawTimeGrid(
     while (t <= visibleEnd) {
         val x = (t * pixelsPerSecond - scrollOffset).toFloat()
         drawLine(
-            color = color.copy(alpha = 0.3f),
+            color = color.copy(alpha = 0.25f),
             start = Offset(x, 0f),
             end = Offset(x, canvasHeight),
             strokeWidth = 0.5f
@@ -244,31 +342,56 @@ private fun DrawScope.drawTimeGrid(
 }
 
 @Composable
-private fun TimeRuler(
+private fun TimeRulerCanvas(
     visibleStart: Double,
     visibleEnd: Double,
     pixelsPerSecond: Float,
+    scrollOffset: Float,
     palette: KaraokeThemePalette,
     modifier: Modifier = Modifier
 ) {
-    val step = when {
-        pixelsPerSecond > 200 -> 0.5
-        pixelsPerSecond > 100 -> 1.0
-        pixelsPerSecond > 50 -> 2.0
-        pixelsPerSecond > 20 -> 5.0
-        else -> 10.0
+    val textPaint = remember(palette) {
+        Paint().apply {
+            color = palette.muted.toArgb()
+            textSize = 22f
+            isAntiAlias = true
+            textAlign = Paint.Align.Left
+        }
     }
 
-    Box(modifier = modifier.background(palette.canvasAlt)) {
+    Canvas(modifier = modifier.background(palette.canvasAlt)) {
+        val step = when {
+            pixelsPerSecond > 200 -> 0.5
+            pixelsPerSecond > 100 -> 1.0
+            pixelsPerSecond > 50 -> 2.0
+            pixelsPerSecond > 20 -> 5.0
+            else -> 10.0
+        }
+
+        drawLine(
+            color = palette.border.copy(alpha = 0.4f),
+            start = Offset(0f, 0f),
+            end = Offset(size.width, 0f),
+            strokeWidth = 1f
+        )
+
         var t = (visibleStart / step).toInt() * step
         while (t <= visibleEnd) {
-            val x = (t * pixelsPerSecond).toFloat()
-            Text(
-                text = formatTime(t),
-                color = palette.muted,
-                fontSize = 10.sp,
-                modifier = Modifier.padding(start = x.dp + 4.dp, top = 4.dp)
-            )
+            val x = (t * pixelsPerSecond - scrollOffset).toFloat()
+            if (x in 0f..size.width) {
+                drawLine(
+                    color = palette.border.copy(alpha = 0.5f),
+                    start = Offset(x, 0f),
+                    end = Offset(x, 4f),
+                    strokeWidth = 1f
+                )
+                drawContext.canvas.nativeCanvas.drawText(
+                    formatTime(t),
+                    x + 3f,
+                    size.height - 3f,
+                    textPaint
+                )
+            }
             t += step
         }
     }

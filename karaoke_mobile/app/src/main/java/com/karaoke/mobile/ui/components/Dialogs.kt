@@ -1,5 +1,6 @@
 package com.karaoke.mobile.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -17,12 +18,163 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.window.Dialog
-import com.karaoke.mobile.model.KaraokeProject
+import com.karaoke.mobile.model.KaraokeTagType
 import com.karaoke.mobile.ui.theme.*
 import com.karaoke.mobile.viewmodel.ProjectSummary
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+/**
+ * Диалог настроек редактора
+ */
+@Composable
+fun SettingsDialog(
+    autoScroll: Boolean,
+    defaultTagType: KaraokeTagType,
+    palette: KaraokeThemePalette,
+    onToggleAutoScroll: () -> Unit,
+    onSetDefaultTagType: (KaraokeTagType) -> Unit,
+    onOpenThemes: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = palette.panel),
+            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.6f))
+        ) {
+            Column(modifier = Modifier.padding(18.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Настройки",
+                        color = palette.fg,
+                        fontSize = 18.sp,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                    )
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Default.Close, contentDescription = "Close", tint = palette.muted)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Автоскролл таймлайна
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Автоскролл таймлайна",
+                            color = palette.fg,
+                            fontSize = 14.sp,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
+                        )
+                        Text(
+                            text = "Следовать за курсором при воспроизведении",
+                            color = palette.muted,
+                            fontSize = 11.sp
+                        )
+                    }
+                    Switch(
+                        checked = autoScroll,
+                        onCheckedChange = { onToggleAutoScroll() },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = palette.accentFg,
+                            checkedTrackColor = palette.accent,
+                            uncheckedThumbColor = palette.muted,
+                            uncheckedTrackColor = palette.raised
+                        )
+                    )
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = palette.border.copy(alpha = 0.3f))
+
+                // Дефолтный тег караоке
+                Text(
+                    text = "Тег по умолчанию для новых слогов",
+                    color = palette.fg,
+                    fontSize = 14.sp,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    KaraokeTagType.entries.forEach { tagType ->
+                        val isSelected = tagType == defaultTagType
+                        val label = when (tagType) {
+                            KaraokeTagType.K -> "\\k"
+                            KaraokeTagType.KF -> "\\kf"
+                            KaraokeTagType.KO -> "\\ko"
+                            KaraokeTagType.K_CAPITAL -> "\\K"
+                        }
+                        Button(
+                            onClick = { onSetDefaultTagType(tagType) },
+                            modifier = Modifier.weight(1f).height(32.dp),
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isSelected) palette.accent else palette.raised,
+                                contentColor = if (isSelected) palette.accentFg else palette.fg
+                            ),
+                            border = BorderStroke(1.dp, if (isSelected) palette.accentAlt else palette.border.copy(alpha = 0.5f)),
+                            shape = RoundedCornerShape(6.dp)
+                        ) {
+                            Text(label, fontSize = 12.sp, fontWeight = if (isSelected) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal)
+                        }
+                    }
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = palette.border.copy(alpha = 0.3f))
+
+                // Выбор темы оформления
+                OutlinedButton(
+                    onClick = onOpenThemes,
+                    modifier = Modifier.fillMaxWidth().height(38.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = Color.Transparent,
+                        contentColor = palette.fg
+                    ),
+                    border = BorderStroke(1.dp, palette.border.copy(alpha = 0.6f)),
+                    shape = RoundedCornerShape(6.dp)
+                ) {
+                    Icon(Icons.Default.Palette, contentDescription = null, tint = palette.accent, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Сменить цветовую тему (${palette.name})", fontSize = 12.sp)
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Информация о приложении
+                Text(
+                    text = "Karaoke Mobile Studio • v1.0",
+                    color = palette.muted.copy(alpha = 0.7f),
+                    fontSize = 11.sp,
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    Text("Закрыть", color = palette.accent, fontSize = 13.sp)
+                }
+            }
+        }
+    }
+}
 
 /**
  * Диалог выбора темы
@@ -39,7 +191,8 @@ fun ThemePickerDialog(
                 .fillMaxWidth()
                 .padding(16.dp),
             shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = currentTheme.panel)
+            colors = CardDefaults.cardColors(containerColor = currentTheme.panel),
+            border = BorderStroke(1.dp, currentTheme.border.copy(alpha = 0.6f))
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text(
@@ -83,7 +236,14 @@ private fun ThemeItem(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
-            .background(if (isSelected) theme.accent.copy(alpha = 0.15f) else theme.raised)
+            .background(if (isSelected) theme.accent.copy(alpha = 0.2f) else theme.raised)
+            .border(
+                BorderStroke(
+                    1.dp,
+                    if (isSelected) theme.accent else theme.border.copy(alpha = 0.3f)
+                ),
+                shape = RoundedCornerShape(8.dp)
+            )
             .clickable(onClick = onClick)
             .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -135,7 +295,8 @@ fun ExportImportDialog(
                 .fillMaxWidth()
                 .padding(16.dp),
             shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = palette.panel)
+            colors = CardDefaults.cardColors(containerColor = palette.panel),
+            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.6f))
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text(
@@ -182,18 +343,20 @@ private fun ExportOptions(
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Card(
             modifier = Modifier.fillMaxWidth().clickable(onClick = onExportProject),
-            colors = CardDefaults.cardColors(containerColor = palette.raised)
+            colors = CardDefaults.cardColors(containerColor = palette.raised),
+            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.4f))
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(modifier = Modifier.padding(14.dp)) {
                 Text("Проект (.zip)", color = palette.fg, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium)
                 Text("Включая ASS, медиа и настройки", color = palette.muted, fontSize = 12.sp)
             }
         }
         Card(
             modifier = Modifier.fillMaxWidth().clickable(onClick = onExportAss),
-            colors = CardDefaults.cardColors(containerColor = palette.raised)
+            colors = CardDefaults.cardColors(containerColor = palette.raised),
+            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.4f))
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(modifier = Modifier.padding(14.dp)) {
                 Text("ASS-файл", color = palette.fg, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium)
                 Text("Только субтитры", color = palette.muted, fontSize = 12.sp)
             }
@@ -210,18 +373,20 @@ private fun ImportOptions(
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Card(
             modifier = Modifier.fillMaxWidth().clickable(onClick = onImportProject),
-            colors = CardDefaults.cardColors(containerColor = palette.raised)
+            colors = CardDefaults.cardColors(containerColor = palette.raised),
+            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.4f))
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(modifier = Modifier.padding(14.dp)) {
                 Text("Проект (.zip)", color = palette.fg, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium)
                 Text("Импортировать полный проект", color = palette.muted, fontSize = 12.sp)
             }
         }
         Card(
             modifier = Modifier.fillMaxWidth().clickable(onClick = onImportAss),
-            colors = CardDefaults.cardColors(containerColor = palette.raised)
+            colors = CardDefaults.cardColors(containerColor = palette.raised),
+            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.4f))
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(modifier = Modifier.padding(14.dp)) {
                 Text("ASS-файл", color = palette.fg, fontWeight = androidx.compose.ui.text.font.FontWeight.Medium)
                 Text("Импортировать только субтитры", color = palette.muted, fontSize = 12.sp)
             }
@@ -248,13 +413,14 @@ fun TimingEditorDialog(
                 .fillMaxWidth()
                 .padding(16.dp),
             shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = palette.panel)
+            colors = CardDefaults.cardColors(containerColor = palette.panel),
+            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.6f))
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text(
                     text = "Редактирование тайминга",
                     color = palette.fg,
-                    fontSize = 20.sp,
+                    fontSize = 18.sp,
                     fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
                     modifier = Modifier.padding(bottom = 12.dp)
                 )
@@ -355,108 +521,96 @@ fun ProjectsListDialog(
     onImportZip: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val dateFormat = remember { SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()) }
+
     Dialog(onDismissRequest = onDismiss) {
         Card(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp),
             shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = palette.panel)
+            colors = CardDefaults.cardColors(containerColor = palette.panel),
+            border = BorderStroke(1.dp, palette.border.copy(alpha = 0.6f))
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(
+                modifier = Modifier
+                    .padding(16.dp)
+                    .fillMaxWidth()
+            ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Открыть проект",
+                        text = "Проекты",
                         color = palette.fg,
                         fontSize = 20.sp,
                         fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
                     )
                     IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
-                        Icon(Icons.Default.Close, contentDescription = "Закрыть", tint = palette.muted)
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Закрыть",
+                            tint = palette.muted
+                        )
                     }
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
 
                 if (projects.isEmpty()) {
-                    Column(
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = 24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                        contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.FolderOpen,
-                            contentDescription = null,
-                            tint = palette.muted,
-                            modifier = Modifier.size(48.dp)
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
                         Text(
                             text = "Нет сохранённых проектов",
                             color = palette.muted,
                             fontSize = 14.sp
                         )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Button(
-                            onClick = onImportZip,
-                            colors = ButtonDefaults.buttonColors(containerColor = palette.accent)
-                        ) {
-                            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Импортировать (.zip)", color = palette.accentFg)
-                        }
                     }
                 } else {
                     LazyColumn(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(max = 320.dp),
+                            .heightIn(max = 280.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        items(projects) { project ->
+                        items(projects, key = { it.id }) { proj ->
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(8.dp))
                                     .background(palette.raised)
-                                    .clickable { onSelectProject(project.id) }
-                                    .padding(12.dp),
+                                    .border(BorderStroke(1.dp, palette.border.copy(alpha = 0.35f)), RoundedCornerShape(8.dp))
+                                    .clickable { onSelectProject(proj.id) }
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.MusicNote,
-                                    contentDescription = null,
-                                    tint = palette.accent,
-                                    modifier = Modifier.size(24.dp)
-                                )
-                                Spacer(modifier = Modifier.width(10.dp))
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = project.name,
+                                        text = proj.name,
                                         color = palette.fg,
-                                        fontSize = 15.sp,
+                                        fontSize = 14.sp,
                                         fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
-                                        maxLines = 1,
-                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                        maxLines = 1
                                     )
-                                    val dateStr = SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()).format(Date(project.modifiedAt))
                                     Text(
-                                        text = dateStr,
+                                        text = dateFormat.format(Date(proj.modifiedAt)),
                                         color = palette.muted,
-                                        fontSize = 12.sp
+                                        fontSize = 11.sp
                                     )
                                 }
                                 IconButton(
-                                    onClick = { onDeleteProject(project.id) },
+                                    onClick = { onDeleteProject(proj.id) },
                                     modifier = Modifier.size(32.dp)
                                 ) {
                                     Icon(
-                                        Icons.Default.Delete,
+                                        imageVector = Icons.Default.Delete,
                                         contentDescription = "Удалить",
                                         tint = palette.danger.copy(alpha = 0.8f),
                                         modifier = Modifier.size(18.dp)
@@ -465,26 +619,30 @@ fun ProjectsListDialog(
                             }
                         }
                     }
+                }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedButton(
+                        onClick = onImportZip,
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = Color.Transparent,
+                            contentColor = palette.fg
+                        ),
+                        border = BorderStroke(1.dp, palette.border.copy(alpha = 0.6f)),
+                        shape = RoundedCornerShape(6.dp)
                     ) {
-                        OutlinedButton(
-                            onClick = onImportZip,
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = palette.fg),
-                            border = ButtonDefaults.outlinedButtonBorder
-                        ) {
-                            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Импорт ZIP", fontSize = 12.sp)
-                        }
-                        TextButton(onClick = onDismiss) {
-                            Text("Закрыть", color = palette.accent)
-                        }
+                        Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp), tint = palette.accent)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Импорт ZIP", fontSize = 12.sp)
+                    }
+                    TextButton(onClick = onDismiss) {
+                        Text("Закрыть", color = palette.accent)
                     }
                 }
             }

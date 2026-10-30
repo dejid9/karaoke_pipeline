@@ -186,6 +186,8 @@ class DualTimeline(ttk.Frame):
         self.tracks: list[int] = [0]
         self.active_track: int = 0
         self.track_scroll_y: float = 0.0
+        self._shift_pressed: bool = False
+        self._ctrl_pressed: bool = False
         self.on_add_track: Optional[Callable[[str, int], None]] = None
         self.on_move_track: Optional[Callable[[int, int], None]] = None
         self.on_delete_track: Optional[Callable[[int], None]] = None
@@ -193,7 +195,7 @@ class DualTimeline(ttk.Frame):
         self.on_syllable_move: Optional[Callable[[str, float], None]] = None
         self.palette = get_theme(DEFAULT_THEME)
 
-        self.overview = tk.Canvas(self, height=46, highlightthickness=0, background=self.palette.canvas_alt)
+        self.overview = tk.Canvas(self, height=36, highlightthickness=0, background=self.palette.canvas_alt)
         self.overview.grid(row=0, column=0, columnspan=2, sticky="ew")
 
         self.track_panel = tk.Canvas(self, width=135, highlightthickness=0, background=self.palette.canvas_alt)
@@ -202,7 +204,7 @@ class DualTimeline(ttk.Frame):
         self.track_panel.bind("<Shift-MouseWheel>", lambda e: self._mousewheel(e, overview=False, force_pan=True))
         self.track_panel.bind("<Configure>", lambda _e: self._draw_track_panel())
 
-        self.detail = tk.Canvas(self, height=260, highlightthickness=0, background=self.palette.canvas)
+        self.detail = tk.Canvas(self, height=320, highlightthickness=0, background=self.palette.canvas)
         self.detail.grid(row=1, column=0, columnspan=2, sticky="nsew")
 
         self.columnconfigure(0, weight=1)
@@ -217,6 +219,8 @@ class DualTimeline(ttk.Frame):
         # Navigation gestures: vertical wheel/trackpad zooms; Shift+wheel or
         # native horizontal wheel pans. Bind both canvases so the overview and
         # detailed lane feel like one editor timeline.
+        # Track modifier keys globally because event.state in MouseWheel is
+        # unreliable on Windows (does not contain Shift/Ctrl bits).
         for canvas, is_overview in ((self.overview, True), (self.detail, False)):
             canvas.bind("<MouseWheel>", lambda e, ov=is_overview: self._mousewheel(e, overview=ov))
             canvas.bind("<Shift-MouseWheel>", lambda e, ov=is_overview: self._mousewheel(e, overview=ov, force_pan=True))
@@ -234,6 +238,20 @@ class DualTimeline(ttk.Frame):
         self.detail.bind("<ButtonPress-2>", self._pan_start)
         self.detail.bind("<B2-Motion>", self._pan_drag)
         self.detail.bind("<ButtonPress-3>", self._detail_right_click)
+        # Global modifier key tracking for reliable gesture detection
+        self._bind_modifiers(self.overview)
+        self._bind_modifiers(self.detail)
+
+    def _bind_modifiers(self, widget: tk.Widget) -> None:
+        """Track Shift and Ctrl state globally since MouseWheel event.state is unreliable."""
+        widget.bind("<KeyPress-Shift_L>", lambda _e: setattr(self, "_shift_pressed", True), add="+")
+        widget.bind("<KeyPress-Shift_R>", lambda _e: setattr(self, "_shift_pressed", True), add="+")
+        widget.bind("<KeyRelease-Shift_L>", lambda _e: setattr(self, "_shift_pressed", False), add="+")
+        widget.bind("<KeyRelease-Shift_R>", lambda _e: setattr(self, "_shift_pressed", False), add="+")
+        widget.bind("<KeyPress-Control_L>", lambda _e: setattr(self, "_ctrl_pressed", True), add="+")
+        widget.bind("<KeyPress-Control_R>", lambda _e: setattr(self, "_ctrl_pressed", True), add="+")
+        widget.bind("<KeyRelease-Control_L>", lambda _e: setattr(self, "_ctrl_pressed", False), add="+")
+        widget.bind("<KeyRelease-Control_R>", lambda _e: setattr(self, "_ctrl_pressed", False), add="+")
 
     def _wave_bounds(self, h: int) -> tuple[int, int]:
         wave_top = 26
@@ -255,7 +273,7 @@ class DualTimeline(ttk.Frame):
         wave_top, wave_bottom = self._wave_bounds(h)
         lane_top = wave_bottom + 5
         lane_bottom = h - 10
-        TRACK_LANE_HEIGHT = 75
+        TRACK_LANE_HEIGHT = 55
 
         c.create_text(w / 2, 12, text="Дорожки", fill=self.palette.muted, font=("TkDefaultFont", 8, "bold"))
         c.create_line(0, lane_top - 1, w, lane_top - 1, fill=self.palette.border)
@@ -693,7 +711,7 @@ class DualTimeline(ttk.Frame):
         wave_top, wave_bottom = self._wave_bounds(h)
         lane_top = wave_bottom + 5
         lane_bottom = h - 10
-        TRACK_LANE_HEIGHT = 75
+        TRACK_LANE_HEIGHT = 55
 
         step = _nice_tick(self.viewport.span)
         first = floor(self.viewport.view_start / step) * step
@@ -1428,11 +1446,19 @@ class DualTimeline(ttk.Frame):
         return "break"
 
     def _mousewheel(self, event, *, overview: bool = False, force_pan: bool = False) -> str:
-        steps = self._wheel_steps(getattr(event, "delta", 0))
-        shift = bool(getattr(event, "state", 0) & 0x0001)
-        ctrl = bool(getattr(event, "state", 0) & 0x0004)
+        raw_delta = getattr(event, "delta", 0)
+        steps = self._wheel_steps(raw_delta)
+        # event.state in MouseWheel is unreliable on Windows for modifier keys.
+        # Use globally tracked state exclusively; ignore event.state bits.
+        shift = self._shift_pressed
+        ctrl = self._ctrl_pressed
+        # Touchpad precision: small deltas (< 30) are treated as pan, not zoom.
+        is_precision = abs(raw_delta) < 30 and raw_delta != 0
+        # Prefer pan over zoom when no modifier is held and delta is small (touchpad).
+        want_pan = force_pan or shift or is_precision
+        want_zoom = ctrl or (not shift and not is_precision and steps != 0)
         if self.is_karaoke and self.advanced_mode and not overview:
-            if ctrl:
+            if want_zoom and not want_pan:
                 if not steps:
                     return "break"
                 factor = 0.8 ** steps
@@ -1440,12 +1466,12 @@ class DualTimeline(ttk.Frame):
                 self.viewport.zoom(factor, anchor)
                 self._view_changed()
                 return "break"
-            elif force_pan or shift:
-                return self._pan_wheel_steps(steps)
+            elif want_pan:
+                return self._pan_wheel_steps(steps if not is_precision else raw_delta / 30.0)
             else:
                 if not steps:
                     return "break"
-                TRACK_LANE_HEIGHT = 75
+                TRACK_LANE_HEIGHT = 55
                 total_tracks_h = len(self.tracks) * TRACK_LANE_HEIGHT
                 h = max(1, self.detail.winfo_height())
                 wave_top, wave_bottom = self._wave_bounds(h)
@@ -1457,8 +1483,8 @@ class DualTimeline(ttk.Frame):
                 self.redraw()
                 self._draw_track_panel()
                 return "break"
-        if force_pan or shift:
-            return self._pan_wheel_steps(steps)
+        if want_pan:
+            return self._pan_wheel_steps(steps if not is_precision else raw_delta / 30.0)
         if not steps:
             return "break"
         factor = 0.8 ** steps
@@ -1468,8 +1494,9 @@ class DualTimeline(ttk.Frame):
         return "break"
 
     def _linux_wheel(self, event, direction: int, *, overview: bool = False) -> str:
-        shift = bool(getattr(event, "state", 0) & 0x0001)
-        ctrl = bool(getattr(event, "state", 0) & 0x0004)
+        # Ignore event.state for modifiers; rely on global tracking only.
+        shift = self._shift_pressed
+        ctrl = self._ctrl_pressed
         if self.is_karaoke and self.advanced_mode and not overview:
             if ctrl:
                 factor = 0.8 if direction < 0 else 1.25
@@ -1480,7 +1507,7 @@ class DualTimeline(ttk.Frame):
             elif shift:
                 return self._pan_wheel_steps(-float(direction))
             else:
-                TRACK_LANE_HEIGHT = 75
+                TRACK_LANE_HEIGHT = 55
                 total_tracks_h = len(self.tracks) * TRACK_LANE_HEIGHT
                 h = max(1, self.detail.winfo_height())
                 wave_top, wave_bottom = self._wave_bounds(h)

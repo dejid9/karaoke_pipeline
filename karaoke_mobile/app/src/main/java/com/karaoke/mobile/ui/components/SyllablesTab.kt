@@ -1,5 +1,6 @@
 package com.karaoke.mobile.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -21,7 +22,7 @@ import com.karaoke.mobile.model.KaraokeTagType
 import com.karaoke.mobile.ui.theme.KaraokeThemePalette
 
 /**
- * Список слогов с inline-редактированием.
+ * Компактный список слогов с inline-редактированием.
  */
 @Composable
 fun SyllablesTab(
@@ -42,8 +43,8 @@ fun SyllablesTab(
 ) {
     LazyColumn(
         modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(8.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp)
     ) {
         items(syllables, key = { it.id }) { syllable ->
             SyllableItem(
@@ -82,67 +83,88 @@ private fun SyllableItem(
     onDelete: () -> Unit
 ) {
     val bgColor = when {
-        isActive -> palette.accent.copy(alpha = 0.2f)
-        isSelected -> palette.selection.copy(alpha = 0.15f)
+        isActive -> palette.accent.copy(alpha = 0.22f)
+        isSelected -> palette.selection.copy(alpha = 0.18f)
         else -> palette.panel
     }
     val borderColor = when {
         isActive -> palette.accent
         isSelected -> palette.selection
-        else -> palette.border.copy(alpha = 0.2f)
+        else -> palette.border.copy(alpha = 0.35f)
     }
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(6.dp))
             .clickable { onSelect(false) },
         colors = CardDefaults.cardColors(containerColor = bgColor),
-        border = androidx.compose.foundation.BorderStroke(1.dp, borderColor)
+        border = BorderStroke(if (isActive || isSelected) 1.5.dp else 1.dp, borderColor)
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
+        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+            // Верхняя строка: тег, время и действия в одну линию
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Тег типа
-                val tagLabel = when (syllable.tagType) {
-                    KaraokeTagType.K -> "\\k"
-                    KaraokeTagType.KF -> "\\kf"
-                    KaraokeTagType.KO -> "\\ko"
-                    KaraokeTagType.K_CAPITAL -> "\\K"
-                }
-                Surface(
-                    color = if (syllable.isUnspoken) palette.muted.copy(alpha = 0.3f) else palette.accent.copy(alpha = 0.15f),
-                    shape = RoundedCornerShape(4.dp)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
+                    // Тег типа (\k, \kf, \ko, \K)
+                    val tagLabel = when (syllable.tagType) {
+                        KaraokeTagType.K -> "\\k"
+                        KaraokeTagType.KF -> "\\kf"
+                        KaraokeTagType.KO -> "\\ko"
+                        KaraokeTagType.K_CAPITAL -> "\\K"
+                    }
+                    Surface(
+                        color = if (syllable.isUnspoken) palette.warning.copy(alpha = 0.2f) else palette.accent.copy(alpha = 0.18f),
+                        shape = RoundedCornerShape(3.dp),
+                        border = BorderStroke(0.5.dp, if (syllable.isUnspoken) palette.warning else palette.accent.copy(alpha = 0.5f))
+                    ) {
+                        Text(
+                            text = if (syllable.isUnspoken) "$tagLabel (mute)" else tagLabel,
+                            color = if (syllable.isUnspoken) palette.warning else palette.accent,
+                            fontSize = 10.sp,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                        )
+                    }
+
+                    // Интервал времени
                     Text(
-                        text = tagLabel,
-                        color = if (syllable.isUnspoken) palette.muted else palette.accent,
-                        fontSize = 11.sp,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        text = "${formatTime(syllable.start)} — ${formatTime(syllable.end)}",
+                        color = palette.muted,
+                        fontSize = 11.sp
                     )
                 }
 
-                // Время
-                Text(
-                    text = "${formatTime(syllable.start)} — ${formatTime(syllable.end)}",
-                    color = palette.muted,
-                    fontSize = 11.sp
-                )
+                // Кнопки действий (редактировать, тайминг, удалить)
+                if (!isEditing) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                        IconButton(onClick = onStartEdit, modifier = Modifier.size(24.dp)) {
+                            Icon(Icons.Default.Edit, contentDescription = "Edit", tint = palette.muted, modifier = Modifier.size(15.dp))
+                        }
+                        IconButton(onClick = onStartTimingEdit, modifier = Modifier.size(24.dp)) {
+                            Icon(Icons.Default.Schedule, contentDescription = "Timing", tint = palette.muted, modifier = Modifier.size(15.dp))
+                        }
+                        IconButton(onClick = onDelete, modifier = Modifier.size(24.dp)) {
+                            Icon(Icons.Default.Delete, contentDescription = "Delete", tint = palette.danger.copy(alpha = 0.7f), modifier = Modifier.size(15.dp))
+                        }
+                    }
+                }
             }
-
-            Spacer(modifier = Modifier.height(8.dp))
 
             // Текст слога
             if (isEditing) {
+                Spacer(modifier = Modifier.height(4.dp))
                 OutlinedTextField(
                     value = editValue,
                     onValueChange = onEditValueChange,
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
-                    textStyle = LocalTextStyle.current.copy(color = palette.fg, fontSize = 16.sp),
+                    textStyle = LocalTextStyle.current.copy(color = palette.fg, fontSize = 14.sp),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = palette.accent,
                         unfocusedBorderColor = palette.border,
@@ -151,51 +173,36 @@ private fun SyllableItem(
                     ),
                     trailingIcon = {
                         Row {
-                            IconButton(onClick = onCommitEdit) {
-                                Icon(Icons.Default.Check, contentDescription = "OK", tint = palette.success)
+                            IconButton(onClick = onCommitEdit, modifier = Modifier.size(28.dp)) {
+                                Icon(Icons.Default.Check, contentDescription = "OK", tint = palette.success, modifier = Modifier.size(18.dp))
                             }
-                            IconButton(onClick = onCancelEdit) {
-                                Icon(Icons.Default.Close, contentDescription = "Cancel", tint = palette.danger)
+                            IconButton(onClick = onCancelEdit, modifier = Modifier.size(28.dp)) {
+                                Icon(Icons.Default.Close, contentDescription = "Cancel", tint = palette.danger, modifier = Modifier.size(18.dp))
                             }
                         }
                     }
                 )
             } else {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = syllable.displayText,
-                        color = if (syllable.isUnspoken || syllable.text.isBlank()) palette.muted else palette.fg,
-                        fontSize = 16.sp,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f).clickable { onStartEdit() }
-                    )
-
-                    // Кнопки действий
-                    Row {
-                        IconButton(onClick = onStartEdit, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Default.Edit, contentDescription = "Edit", tint = palette.muted, modifier = Modifier.size(18.dp))
-                        }
-                        IconButton(onClick = onStartTimingEdit, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Default.Schedule, contentDescription = "Timing", tint = palette.muted, modifier = Modifier.size(18.dp))
-                        }
-                        IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Default.Delete, contentDescription = "Delete", tint = palette.danger.copy(alpha = 0.7f), modifier = Modifier.size(18.dp))
-                        }
-                    }
-                }
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = syllable.displayText,
+                    color = if (syllable.isUnspoken || syllable.text.isBlank()) palette.muted else palette.fg,
+                    fontSize = 14.sp,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onStartEdit() }
+                )
             }
 
-            // Романизация
+            // Романизация (если есть)
             syllable.romanization?.let { rom ->
-                Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = rom,
-                    color = palette.muted.copy(alpha = 0.7f),
-                    fontSize = 12.sp
+                    color = palette.muted.copy(alpha = 0.75f),
+                    fontSize = 11.sp
                 )
             }
         }

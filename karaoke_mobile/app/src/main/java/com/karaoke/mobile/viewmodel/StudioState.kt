@@ -69,6 +69,8 @@ data class StudioUiState(
     val zoomLevel: Float = 1.0f,
     val scrollOffset: Float = 0.0f,
     val showHelp: Boolean = false,
+    val autoScroll: Boolean = true,
+    val defaultTagType: KaraokeTagType = KaraokeTagType.K,
     val canUndo: Boolean = false,
     val canRedo: Boolean = false
 )
@@ -914,7 +916,16 @@ class StudioState : ViewModel() {
         viewModelScope.launch {
             while (mediaPlayer?.isPlaying == true) {
                 val pos = mediaPlayer?.currentPosition?.toDouble()?.div(1000.0) ?: 0.0
-                _uiState.value = _uiState.value.copy(playbackPosition = pos)
+                val state = _uiState.value
+                val pps = 50f * state.zoomLevel
+                val playheadPx = (pos * pps).toFloat()
+                val newScroll = if (state.autoScroll) {
+                    if (playheadPx > state.scrollOffset + 280f || playheadPx < state.scrollOffset) {
+                        (playheadPx - 60f).coerceAtLeast(0f)
+                    } else state.scrollOffset
+                } else state.scrollOffset
+
+                _uiState.value = state.copy(playbackPosition = pos, scrollOffset = newScroll)
                 kotlinx.coroutines.delay(50)
             }
         }
@@ -1080,6 +1091,14 @@ class StudioState : ViewModel() {
 
     fun hideSettings() {
         _uiState.value = _uiState.value.copy(showSettings = false)
+    }
+
+    fun toggleAutoScroll() {
+        _uiState.value = _uiState.value.copy(autoScroll = !_uiState.value.autoScroll)
+    }
+
+    fun setDefaultTagType(type: KaraokeTagType) {
+        _uiState.value = _uiState.value.copy(defaultTagType = type)
     }
 
     fun showHelp() {
