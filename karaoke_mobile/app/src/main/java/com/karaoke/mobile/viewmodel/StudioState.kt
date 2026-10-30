@@ -114,8 +114,8 @@ class StudioState : ViewModel() {
                 val project = KaraokeProject(
                     id = json.getString("id"),
                     name = json.getString("name"),
-                    mediaPath = json.optString("mediaPath", null),
-                    subtitlePath = json.optString("subtitlePath", null),
+                    mediaPath = json.optString("mediaPath").takeIf { it.isNotBlank() },
+                    subtitlePath = json.optString("subtitlePath").takeIf { it.isNotBlank() },
                     createdAt = json.getLong("createdAt"),
                     modifiedAt = json.getLong("modifiedAt")
                 )
@@ -301,17 +301,17 @@ class StudioState : ViewModel() {
                         val rawJson = projectJsonFile.readText().removePrefix("\uFEFF")
                         val json = JSONObject(rawJson)
                         if (json.has("name") && !json.isNull("name")) {
-                            projectName = json.optString("name", null)
+                            projectName = json.getString("name")
                         }
                         if (json.has("mediaPath") && !json.isNull("mediaPath")) {
-                            mediaPathCandidate = json.optString("mediaPath", null)
+                            mediaPathCandidate = json.getString("mediaPath")
                         } else if (json.has("media") && !json.isNull("media")) {
-                            mediaPathCandidate = json.optString("media", null)
+                            mediaPathCandidate = json.getString("media")
                         }
                         if (json.has("subtitlePath") && !json.isNull("subtitlePath")) {
-                            subPathCandidate = json.optString("subtitlePath", null)
+                            subPathCandidate = json.getString("subtitlePath")
                         } else if (json.has("subtitles") && !json.isNull("subtitles")) {
-                            subPathCandidate = json.optString("subtitles", null)
+                            subPathCandidate = json.getString("subtitles")
                         }
                         if (json.has("createdAt") && !json.isNull("createdAt")) {
                             createdAt = json.optLong("createdAt", createdAt)

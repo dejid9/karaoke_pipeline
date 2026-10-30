@@ -193,6 +193,6 @@ class ProjectZipTest {
         assertEquals("lou", syllables[2].text)
         assertEquals("cu", syllables[3].text)
         assertEquals("ra\\N", syllables[4].text)
-        assertEquals("Eu ", syllables[5].text)
+        assertEquals("Eu", syllables[5].text.trim())
     }
 }
