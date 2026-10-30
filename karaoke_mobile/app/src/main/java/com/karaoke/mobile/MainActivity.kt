@@ -1,5 +1,6 @@
 package com.karaoke.mobile
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -163,7 +164,6 @@ class MainActivity : ComponentActivity() {
                             StudioScreen(
                                 uiState = uiState,
                                 viewModel = viewModel,
-                                context = context,
                                 onPickMedia = { pickMediaLauncher.launch(MEDIA_MIME_TYPES) },
                                 onPickAss = { pickAssLauncher.launch(ASS_MIME_TYPES) }
                             )
@@ -278,10 +278,10 @@ class MainActivity : ComponentActivity() {
 private fun StudioScreen(
     uiState: StudioUiState,
     viewModel: StudioState,
-    context: Context,
     onPickMedia: () -> Unit,
     onPickAss: () -> Unit
 ) {
+    val context = LocalContext.current
     Column(modifier = Modifier.fillMaxSize()) {
         // Таймлайн
         Timeline(
