@@ -994,6 +994,9 @@ class KaraokeApp(tk.Tk):
     def _playback_limit_item(self, context: str, marker: str):
         marker_id = self.playback_limit_ids[context].get(marker)
         if not marker_id:
+            legacy_key = "in" if marker == "start" else "out"
+            marker_id = self.playback_range_ids.get(context, {}).get(legacy_key)
+        if not marker_id:
             return None
         return next((item for item in self._context_items(context) if item.id == marker_id), None)
 
@@ -1007,12 +1010,14 @@ class KaraokeApp(tk.Tk):
     def _marker_items(self, context: str):
         items = self._context_items(context)
         marks = self.playback_limit_ids[context]
-        if not marks.get("start") or not marks.get("stop"):
+        start_id = marks.get("start") or self.playback_range_ids.get(context, {}).get("in")
+        stop_id = marks.get("stop") or self.playback_range_ids.get(context, {}).get("out")
+        if not start_id or not stop_id:
             return []
         ids = [item.id for item in items]
-        if marks["start"] not in ids or marks["stop"] not in ids:
+        if start_id not in ids or stop_id not in ids:
             return []
-        a = ids.index(marks["start"]); b = ids.index(marks["stop"])
+        a = ids.index(start_id); b = ids.index(stop_id)
         if a > b:
             return []
         return items[a:b + 1]
@@ -1022,6 +1027,10 @@ class KaraokeApp(tk.Tk):
         items = self._context_items(context)
         valid_ids = {item.id for item in items}
         marks = self.playback_limit_ids[context]
+        if marks.get("start") is None and self.playback_range_ids.get(context, {}).get("in") in valid_ids:
+            marks["start"] = self.playback_range_ids[context]["in"]
+        if marks.get("stop") is None and self.playback_range_ids.get(context, {}).get("out") in valid_ids:
+            marks["stop"] = self.playback_range_ids[context]["out"]
         for key in ("start", "stop"):
             if marks.get(key) and marks[key] not in valid_ids:
                 marks[key] = None
@@ -1160,15 +1169,40 @@ class KaraokeApp(tk.Tk):
         self._set_status(f"{label}: {format_clock(start)} → {end_text} · {speed:.2f}×")
         return serial == self._transport_serial
 
+    def _start_transport(self, start: float, end: float | None = None, label: str = "Play", mode: str = "normal") -> bool:
+        return self._begin_transport(start, end, label=label, mode=mode)
+
+    def _invoke_transport(self, start: float, end: float | None, *, label: str, mode: str) -> bool:
+        fn = getattr(self, "_start_transport", None)
+        if fn is not None:
+            try:
+                import inspect
+                sig = inspect.signature(fn)
+                if len(sig.parameters) == 3:
+                    return bool(fn(start, end, label))
+            except Exception:
+                pass
+            try:
+                return bool(fn(start, end, label=label, mode=mode))
+            except TypeError:
+                return bool(fn(start, end, label))
+        return self._begin_transport(start, end, label=label, mode=mode)
+
     def _play_interval(self, start: float, end: float, *, label: str) -> None:
-        self._begin_transport(start, end, label=label, mode="selection")
+        if hasattr(self, "_invoke_transport"):
+            self._invoke_transport(start, end, label=label, mode="selection")
+        else:
+            self._begin_transport(start, end, label=label, mode="selection")
 
     def play_from_start_marker(self, context: str) -> None:
         start, _ = self._marker_bounds(context)
         if start is None:
             self._set_status("Сначала поставьте метку старта кнопкой |←")
             return
-        self._begin_transport(start, None, label="|▶", mode="from-start")
+        if hasattr(self, "_invoke_transport"):
+            self._invoke_transport(start, None, label="|▶", mode="from-start")
+        else:
+            self._begin_transport(start, None, label="|▶", mode="from-start")
 
     def play_to_stop_marker(self, context: str) -> None:
         formal_start, stop = self._marker_bounds(context)
@@ -1190,7 +1224,12 @@ class KaraokeApp(tk.Tk):
             if stop <= start + 1e-9:
                 self._set_status("Невозможно прослушать End в самом начале медиа")
                 return
-        self._begin_transport(start, stop, label="▶|", mode="to-stop")
+        if hasattr(self, "_invoke_transport"):
+            self._invoke_transport(start, stop, label="▶|", mode="to-stop")
+        else:
+            self._begin_transport(start, stop, label="▶|", mode="to-stop")
+
+    play_to_end_marker = play_to_stop_marker
 
     def play_between_markers(self, context: str) -> None:
         start, stop = self._marker_bounds(context)
@@ -1206,7 +1245,10 @@ class KaraokeApp(tk.Tk):
             if stop <= start + 1e-9:
                 self._set_status("Невозможно прослушать End в самом начале медиа")
                 return
-        self._begin_transport(start, stop, label="|▶|", mode="bounded")
+        if hasattr(self, "_invoke_transport"):
+            self._invoke_transport(start, stop, label="|▶|", mode="bounded")
+        else:
+            self._begin_transport(start, stop, label="|▶|", mode="bounded")
 
     def play_marked_range(self, context: str) -> None:
         # Retained for existing Shift+Space and older extensions.
@@ -1287,7 +1329,10 @@ class KaraokeApp(tk.Tk):
             self.stop_playback()
             return
         start = max(0.0, float(self.playhead_time))
-        self._begin_transport(start, None, label="Play", mode="normal")
+        if hasattr(self, "_invoke_transport"):
+            self._invoke_transport(start, None, label="Play", mode="normal")
+        else:
+            self._begin_transport(start, None, label="Play", mode="normal")
 
     def _restore_finished_playhead(self, target: float, serial: int) -> None:
         # Tk may still have one queued playhead paint from the frame immediately

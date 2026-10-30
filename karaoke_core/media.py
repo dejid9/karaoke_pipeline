@@ -1567,19 +1567,7 @@ class MediaPlayer:
             except Exception as exc:
                 self._portaudio_error = str(exc)
                 self._pa_engine = None
-
-            # Fallback to Windows native waveOut sink if PortAudio / sounddevice is unavailable
-            if _is_windows_audio_platform() and not self._sink_failed:
-                if self._sink is not None:
-                    return True
-                try:
-                    self._sink = _WindowsWaveOutSink()
-                    return True
-                except Exception:
-                    self._sink_failed = True
-                    self._sink = None
-
-            return False
+                return False
 
     @property
     def follow_default_device(self) -> bool:

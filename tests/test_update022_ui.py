@@ -44,6 +44,7 @@ def test_ffplay_short_clip_is_prerendered_to_pcm_wav(monkeypatch, tmp_path: Path
     monkeypatch.setattr(media.subprocess, "run", fake_run)
     monkeypatch.setattr(media.subprocess, "Popen", fake_popen)
     player = media.MediaPlayer()
+    monkeypatch.setattr(player, "_play_windows_native", lambda *a, **k: False)
     player.play(source, 12.0, 12.08, ffplay=ffplay, ffmpeg=ffmpeg)
 
     extract_cmd = captured["extract_cmd"]

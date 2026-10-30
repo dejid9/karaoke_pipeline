@@ -585,7 +585,17 @@ class SPSGraph(ttk.Frame):
 
     def _is_drawable(self) -> bool:
         try:
-            return bool(self.winfo_ismapped() and self.canvas.winfo_ismapped())
+            if not self.winfo_exists():
+                return False
+            top = self.winfo_toplevel()
+            if top.wm_state() in {"withdrawn", "iconic"}:
+                return False
+            parent = self._nametowidget(self.winfo_parent())
+            while parent and parent != top:
+                if parent.winfo_class() == "TNotebook":
+                    return bool(self.winfo_ismapped())
+                parent = getattr(parent, "master", None)
+            return True
         except tk.TclError:
             return False
 

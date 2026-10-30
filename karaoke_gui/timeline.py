@@ -250,7 +250,7 @@ class DualTimeline(ttk.Frame):
             return
         c = self.track_panel
         c.delete("all")
-        w, h = max(1, c.winfo_width()), max(1, c.winfo_height())
+        w, h = self._canvas_dimensions(c, default_h=180)
         c.create_rectangle(0, 0, w, h, fill=self.palette.canvas_alt, outline="")
         wave_top, wave_bottom = self._wave_bounds(h)
         lane_top = wave_bottom + 5
@@ -465,7 +465,17 @@ class DualTimeline(ttk.Frame):
 
     def _is_drawable(self) -> bool:
         try:
-            return bool(self.winfo_ismapped() and self.overview.winfo_ismapped() and self.detail.winfo_ismapped())
+            if not self.winfo_exists():
+                return False
+            top = self.winfo_toplevel()
+            if top.wm_state() in {"withdrawn", "iconic"}:
+                return False
+            parent = self._nametowidget(self.winfo_parent())
+            while parent and parent != top:
+                if parent.winfo_class() == "TNotebook":
+                    return bool(self.winfo_ismapped())
+                parent = getattr(parent, "master", None)
+            return True
         except tk.TclError:
             return False
 
@@ -529,16 +539,25 @@ class DualTimeline(ttk.Frame):
             self._draw_track_panel()
         self._sync_scrollbar()
 
+    def _canvas_dimensions(self, canvas: tk.Canvas, default_w: int = 640, default_h: int = 180) -> tuple[int, int]:
+        w = canvas.winfo_width()
+        if w <= 1:
+            w = max(canvas.winfo_reqwidth(), default_w)
+        h = canvas.winfo_height()
+        if h <= 1:
+            h = max(canvas.winfo_reqheight(), default_h)
+        return w, h
+
     def _time_to_x(self, t: float, *, overview: bool) -> float:
         canvas = self.overview if overview else self.detail
-        width = max(1, canvas.winfo_width())
+        width = self._canvas_dimensions(canvas, default_h=40 if overview else 180)[0]
         start = self.viewport.total_start if overview else self.viewport.view_start
         end = self.viewport.total_end if overview else self.viewport.view_end
         return (t - start) / max(1e-9, end - start) * width
 
     def _x_to_time(self, x: float, *, overview: bool) -> float:
         canvas = self.overview if overview else self.detail
-        width = max(1, canvas.winfo_width())
+        width = self._canvas_dimensions(canvas, default_h=40 if overview else 180)[0]
         start = self.viewport.total_start if overview else self.viewport.view_start
         end = self.viewport.total_end if overview else self.viewport.view_end
         return start + max(0.0, min(1.0, x / width)) * (end - start)
@@ -546,7 +565,7 @@ class DualTimeline(ttk.Frame):
     def _draw_overview(self) -> None:
         c = self.overview
         c.delete("all")
-        w, h = max(1, c.winfo_width()), max(1, c.winfo_height())
+        w, h = self._canvas_dimensions(c, default_h=40)
         c.create_rectangle(0, 0, w, h, fill=self.palette.canvas_alt, outline="")
         for region in self.manual_regions:
             x0 = self._time_to_x(region.start, overview=True)
@@ -667,7 +686,7 @@ class DualTimeline(ttk.Frame):
     def _draw_detail(self) -> None:
         c = self.detail
         c.delete("all")
-        w, h = max(1, c.winfo_width()), max(1, c.winfo_height())
+        w, h = self._canvas_dimensions(c, default_h=180)
         c.create_rectangle(0, 0, w, h, fill=self.palette.canvas, outline="")
         is_multi_track = bool(self.is_karaoke and self.advanced_mode)
         time_bottom = 24
@@ -961,11 +980,7 @@ class DualTimeline(ttk.Frame):
         self._update_playhead_items()
 
     def _update_playhead_items(self) -> None:
-        if not self._is_drawable():
-            # The current time is already stored in self.playhead_time.  A full
-            # redraw on <Map> will place the line correctly without doing Tk
-            # canvas work at 25–30 FPS on a hidden tab.
-            self._needs_redraw_on_map = True
+        if not self.winfo_exists():
             return
         value = self.playhead_time
         for canvas, overview in ((self.overview, True), (self.detail, False)):
@@ -980,7 +995,7 @@ class DualTimeline(ttk.Frame):
                 continue
             assert value is not None
             x = self._time_to_x(float(value), overview=overview)
-            h = max(1, canvas.winfo_height())
+            h = self._canvas_dimensions(canvas, default_h=40 if overview else 180)[1]
             if items:
                 canvas.coords(items[0], x, 1 if overview else 0, x, h - 1 if overview else h)
                 canvas.itemconfigure(items[0], fill=self.palette.accent, width=2)

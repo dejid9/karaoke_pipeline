@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -33,6 +34,8 @@ def test_portable_mode_never_falls_back_to_path_or_stale_explicit_value(tmp_path
     conda_ffmpeg.write_bytes(b"conda")
     monkeypatch.setenv("PATH", str(conda_ffmpeg.parent))
     monkeypatch.setenv("FFMPEG", str(conda_ffmpeg))
+    # When isolating to tmp_path, portable mode only searches tmp_path and its parents
+    monkeypatch.setattr("karaoke_core.project.find_portable_ffmpeg", lambda root: find_local_ffmpeg(root))
     # Old project.json may still contain ffmpeg, but without ffmpeg_mode it now
     # defaults to portable and therefore must ignore that stale Conda path.
     cfg = ProjectConfig(ffmpeg=str(conda_ffmpeg), ffmpeg_mode="portable")
@@ -76,10 +79,10 @@ def test_standalone_ffmpeg_strips_active_conda_prefix_from_child_path(tmp_path: 
     standalone.write_bytes(b"stub")
     other = tmp_path / "Windows" / "System32"
     monkeypatch.setenv("CONDA_PREFIX", str(conda))
-    monkeypatch.setenv("PATH", str(conda_bin) + ":" + str(other) + ":" + str(conda_scripts))
+    monkeypatch.setenv("PATH", os.pathsep.join((str(conda_bin), str(other), str(conda_scripts))))
     with patch("karaoke_core.media.sys.platform", "win32"):
         env = media_tool_subprocess_env(standalone)
-    parts = env["PATH"].split(":")
+    parts = env["PATH"].split(os.pathsep)
     assert parts[0] == str(standalone.parent.resolve())
     assert str(other) in parts
     assert str(conda_bin) not in parts
@@ -91,7 +94,7 @@ def test_ffmpeg_inside_active_conda_keeps_environment_only_when_explicitly_selec
     ffmpeg = conda / "Library" / "bin" / "ffmpeg.exe"
     ffmpeg.parent.mkdir(parents=True)
     ffmpeg.write_bytes(b"stub")
-    raw_path = str(ffmpeg.parent) + ":" + str(tmp_path / "other")
+    raw_path = os.pathsep.join((str(ffmpeg.parent), str(tmp_path / "other")))
     monkeypatch.setenv("CONDA_PREFIX", str(conda))
     monkeypatch.setenv("PATH", raw_path)
     with patch("karaoke_core.media.sys.platform", "win32"):
