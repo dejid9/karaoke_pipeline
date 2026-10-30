@@ -29,11 +29,16 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Accept Android SDK licenses
+        run: |
+          mkdir -p $ANDROID_HOME/licenses
+          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" > $ANDROID_HOME/licenses/android-sdk-license
+          echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> $ANDROID_HOME/licenses/android-sdk-license
+          echo "84831b9409646a918e30573bab4c9c91346d8abd" > $ANDROID_HOME/licenses/android-sdk-preview-license
 
       - name: Install Android SDK 35
-        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+        run: |
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_HOME 'platforms;android-35' 'build-tools;35.0.0'
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -42,10 +47,10 @@ jobs:
           cache-read-only: ${{ github.event_name == 'pull_request' }}
 
       - name: Run unit tests
-        run: gradle :app:testDebugUnitTest --no-daemon --stacktrace
+        run: ./gradlew :app:testDebugUnitTest --no-daemon --stacktrace
 
       - name: Assemble debug APK
-        run: gradle :app:assembleDebug --no-daemon --stacktrace
+        run: ./gradlew :app:assembleDebug --no-daemon --stacktrace
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
@@ -81,11 +86,16 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Accept Android SDK licenses
+        run: |
+          mkdir -p $ANDROID_HOME/licenses
+          echo "24333f8a63b6825ea9c5514f83c2829b004d1fee" > $ANDROID_HOME/licenses/android-sdk-license
+          echo "d56f5187479451eabf01fb78af6dfcb131a6481e" >> $ANDROID_HOME/licenses/android-sdk-license
+          echo "84831b9409646a918e30573bab4c9c91346d8abd" > $ANDROID_HOME/licenses/android-sdk-preview-license
 
       - name: Install Android SDK 35
-        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+        run: |
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_HOME 'platforms;android-35' 'build-tools;35.0.0'
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -93,7 +103,7 @@ jobs:
           gradle-version: '8.9'
 
       - name: Assemble release APK
-        run: gradle :app:assembleRelease --no-daemon
+        run: ./gradlew :app:assembleRelease --no-daemon
 
       - name: Sign release APK
         uses: r0adkll/sign-android-release@v1
