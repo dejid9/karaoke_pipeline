@@ -38,7 +38,8 @@ jobs:
 
       - name: Install Android SDK 35
         run: |
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_HOME 'platforms;android-35' 'build-tools;35.0.0'
+          SDKMANAGER=$(which sdkmanager || find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f 2>/dev/null | head -n 1 || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" 'platforms;android-35' 'build-tools;35.0.0'
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -95,7 +96,8 @@ jobs:
 
       - name: Install Android SDK 35
         run: |
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_HOME 'platforms;android-35' 'build-tools;35.0.0'
+          SDKMANAGER=$(which sdkmanager || find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f 2>/dev/null | head -n 1 || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" 'platforms;android-35' 'build-tools;35.0.0'
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
