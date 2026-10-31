@@ -609,10 +609,15 @@ class SPSGraph(ttk.Frame):
         self._needs_redraw_on_map = False
         self.request_redraw(delay_ms=1, force=True)
 
-    def _configure_redraw(self, _event=None) -> None:
+    def _configure_redraw(self, event=None) -> None:
         if not self._is_drawable():
             self._needs_redraw_on_map = True
             return
+        if event is not None:
+            w, h = getattr(event, "width", 0), getattr(event, "height", 0)
+            if w > 1 and h > 1 and getattr(self, "_last_canvas_size", None) == (w, h):
+                return
+            self._last_canvas_size = (w, h)
         if self._resize_job is not None:
             try:
                 self.after_cancel(self._resize_job)

@@ -47,10 +47,18 @@ class ScrollableFrame(ttk.Frame):
             self.canvas.configure(scrollregion=(0, 0, can_w, can_h))
             self.canvas.yview_moveto(0.0)
 
-    def _on_content_configure(self, _event=None) -> None:
+    def _on_content_configure(self, event=None) -> None:
+        if event is not None:
+            w, h = getattr(event, "width", 0), getattr(event, "height", 0)
+            if w > 1 and h > 1 and getattr(self, "_last_content_size", None) == (w, h):
+                return
+            self._last_content_size = (w, h)
         self._update_scrollregion()
 
     def _on_canvas_configure(self, event) -> None:
+        if (event.width, event.height) == getattr(self, "_last_canvas_size", None):
+            return
+        self._last_canvas_size = (event.width, event.height)
         self.canvas.itemconfig(self.content_id, width=event.width)
         self._update_scrollregion()
 

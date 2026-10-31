@@ -193,7 +193,7 @@ class DualTimeline(ttk.Frame):
         self.track_panel.bind("<ButtonPress-1>", self._track_panel_click)
         self.track_panel.bind("<MouseWheel>", lambda e: self._mousewheel(e, overview=False))
         self.track_panel.bind("<Shift-MouseWheel>", lambda e: self._mousewheel(e, overview=False, force_pan=True))
-        self.track_panel.bind("<Configure>", lambda _e: self._draw_track_panel())
+        self.track_panel.bind("<Configure>", self._on_track_panel_configure)
 
         self.detail = tk.Canvas(self, height=260, highlightthickness=0, background=self.palette.canvas)
         self.detail.grid(row=1, column=0, columnspan=2, sticky="nsew")
@@ -236,6 +236,14 @@ class DualTimeline(ttk.Frame):
         else:
             wave_bottom = max(wave_top + 30, int(h * 0.66))
         return wave_top, wave_bottom
+
+    def _on_track_panel_configure(self, event=None) -> None:
+        if event is not None:
+            w, h = getattr(event, "width", 0), getattr(event, "height", 0)
+            if w > 1 and h > 1 and getattr(self, "_last_track_panel_size", None) == (w, h):
+                return
+            self._last_track_panel_size = (w, h)
+        self._draw_track_panel()
 
     def _draw_track_panel(self) -> None:
         if not hasattr(self, "track_panel") or not self.track_panel.winfo_ismapped():
@@ -497,11 +505,19 @@ class DualTimeline(ttk.Frame):
             self._needs_redraw_on_map = False
         self.request_redraw(delay_ms=1, force=True)
 
-    def _configure_redraw(self, _event=None) -> None:
+    def _configure_redraw(self, event=None) -> None:
         # Ignore resize storms for hidden notebook pages/minimized windows.
         if not self._is_drawable():
             self._needs_redraw_on_map = True
             return
+        if event is not None and getattr(event, "widget", None) is not None:
+            w, h = getattr(event, "width", 0), getattr(event, "height", 0)
+            widget = event.widget
+            if w > 1 and h > 1 and getattr(self, "_last_canvas_size", {}).get(widget) == (w, h):
+                return
+            if not hasattr(self, "_last_canvas_size"):
+                self._last_canvas_size = {}
+            self._last_canvas_size[widget] = (w, h)
         # Rebuilding a spectrogram image for every intermediate Windows resize
         # event makes even dragging the window border feel sticky. Wait until
         # geometry settles briefly, while wheel/touchpad navigation stays on a
