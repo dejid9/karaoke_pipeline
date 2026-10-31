@@ -1406,14 +1406,8 @@ class KaraokeApp(tk.Tk):
         # Compact top subheader: Title + info on left, transfer controls inline on right
         header = ttk.Frame(tab, style="Subheader.TFrame")
         header.pack(fill="x", pady=(0, 1))
-        left = ttk.Frame(header, style="Subheader.TFrame")
-        left.pack(side="left")
-        ttk.Label(left, text="Karaoke", style="Header.TLabel").pack(side="left")
-        self.ass_label = ttk.Label(left, text="—", style="PanelMuted.TLabel")
-        self.ass_label.pack(side="left", padx=(6, 4))
-        self.karaoke_info = ttk.Label(left, text="0 слогов", style="Badge.TLabel")
-        self.karaoke_info.pack(side="left")
 
+        # Pack transfer FIRST to the right so it is ALWAYS visible and never pushed off-screen
         transfer = ttk.Frame(header, style="Subheader.TFrame")
         transfer.pack(side="right")
         ttk.Label(transfer, text="SPS≥", style="PanelMuted.TLabel").pack(side="left")
@@ -1424,6 +1418,14 @@ class KaraokeApp(tk.Tk):
         self.transfer_button = ttk.Button(transfer, text="→ SPS", command=self.transfer_to_sps, style="Accent.TButton")
         self.transfer_button.pack(side="left")
         self._karaoke_transfer_advanced = [w for w in transfer.winfo_children() if isinstance(w, (ttk.Label, ttk.Spinbox, ttk.Combobox))]
+
+        left = ttk.Frame(header, style="Subheader.TFrame")
+        left.pack(side="left", fill="x", expand=True)
+        ttk.Label(left, text="Karaoke", style="Header.TLabel").pack(side="left")
+        self.ass_label = ttk.Label(left, text="—", style="PanelMuted.TLabel")
+        self.ass_label.pack(side="left", padx=(6, 4))
+        self.karaoke_info = ttk.Label(left, text="0 слогов", style="Badge.TLabel")
+        self.karaoke_info.pack(side="left")
 
         # Modern Transport Bar
         self._build_transport_bar(tab, context="karaoke")
@@ -1535,34 +1537,38 @@ class KaraokeApp(tk.Tk):
         self.karaoke_link_track0_btn.pack(side="left", padx=(2, 0))
         ttk.Label(text_bot, textvariable=self.karaoke_text_state_var, style="CardMuted.TLabel").pack(side="left", padx=(4, 0), fill="x", expand=True)
 
-        # Right Card: Timing, Tag, History, Burst (ultra-compact, single-column)
+        # Right Card: Timing, Tag, History, Burst (organized into two clean compact rows)
         right_card = ttk.Frame(dock, style="Card.TFrame", padding=(4, 2))
         right_card.pack(side="right", fill="both", padx=(2, 0))
 
-        # Single compact row: all ops inline
-        edit_ops = ttk.Frame(right_card, style="Card.TFrame")
-        edit_ops.pack(fill="x")
-        ttk.Button(edit_ops, text="Вст", width=4, command=self.insert_karaoke, style="Secondary.TButton").pack(side="left")
-        ttk.Button(edit_ops, text="Разд", width=4, command=self.split_karaoke, style="Secondary.TButton").pack(side="left", padx=(1, 0))
-        ttk.Button(edit_ops, text="Совм", width=4, command=self.merge_karaoke, style="Secondary.TButton").pack(side="left", padx=(1, 0))
-        ttk.Button(edit_ops, text="Удал", width=4, command=self.delete_karaoke, style="Danger.TButton").pack(side="left", padx=(1, 0))
-        ttk.Separator(edit_ops, orient="vertical").pack(side="left", fill="y", padx=(2, 2))
+        # Row 1: Editing & Tag operations
+        ops_row1 = ttk.Frame(right_card, style="Card.TFrame")
+        ops_row1.pack(fill="x")
+        ttk.Button(ops_row1, text="Вст", width=4, command=self.insert_karaoke, style="Secondary.TButton").pack(side="left")
+        ttk.Button(ops_row1, text="Разд", width=4, command=self.split_karaoke, style="Secondary.TButton").pack(side="left", padx=(1, 0))
+        ttk.Button(ops_row1, text="Совм", width=4, command=self.merge_karaoke, style="Secondary.TButton").pack(side="left", padx=(1, 0))
+        ttk.Button(ops_row1, text="Удал", width=4, command=self.delete_karaoke, style="Danger.TButton").pack(side="left", padx=(1, 0))
+        ttk.Separator(ops_row1, orient="vertical").pack(side="left", fill="y", padx=(2, 2))
         self.karaoke_tag_combo = ttk.Combobox(
-            edit_ops, state="readonly", width=8, textvariable=self.karaoke_tag_var,
+            ops_row1, state="readonly", width=6, textvariable=self.karaoke_tag_var,
             values=("\\k", "\\kf", "\\ko", "\\K"),
         )
         self.karaoke_tag_combo.pack(side="left")
-        ttk.Button(edit_ops, text="OK", width=3, command=self.apply_karaoke_type, style="Secondary.TButton").pack(side="left", padx=(2, 0))
-        ttk.Separator(edit_ops, orient="vertical").pack(side="left", fill="y", padx=(2, 2))
-        ttk.Button(edit_ops, text="↶", width=3, command=self.undo_karaoke, style="Secondary.TButton").pack(side="left")
-        ttk.Button(edit_ops, text="↷", width=3, command=self.redo_karaoke, style="Secondary.TButton").pack(side="left", padx=(1, 0))
-        ttk.Button(edit_ops, text="Сохр", width=4, command=self.save_ass, style="Success.TButton").pack(side="left", padx=(2, 0))
-        ttk.Button(edit_ops, text="Текст…", width=5, command=self.open_full_text_editor, style="Secondary.TButton").pack(side="left", padx=(2, 0))
-        ttk.Separator(edit_ops, orient="vertical").pack(side="left", fill="y", padx=(2, 2))
-        ttk.Label(edit_ops, textvariable=self.karaoke_burst_state_var, style="CardMuted.TLabel").pack(side="left")
-        ttk.Button(edit_ops, text="B+", width=3, command=self.colour_selected_karaoke_burst, style="Danger.TButton").pack(side="right")
-        ttk.Button(edit_ops, text="B−", width=3, command=self.uncolour_selected_karaoke_burst, style="Secondary.TButton").pack(side="right", padx=(0, 1))
-        ttk.Button(edit_ops, text="♪", width=3, command=self.export_burst_or_selection_audio, style="Secondary.TButton").pack(side="right", padx=(0, 1))
+        ttk.Button(ops_row1, text="OK", width=3, command=self.apply_karaoke_type, style="Secondary.TButton").pack(side="left", padx=(2, 0))
+        ttk.Separator(ops_row1, orient="vertical").pack(side="left", fill="y", padx=(2, 2))
+        ttk.Button(ops_row1, text="Текст…", width=5, command=self.open_full_text_editor, style="Secondary.TButton").pack(side="left", padx=(1, 0))
+
+        # Row 2: History, Save, and Burst actions
+        ops_row2 = ttk.Frame(right_card, style="Card.TFrame")
+        ops_row2.pack(fill="x", pady=(2, 0))
+        ttk.Button(ops_row2, text="↶", width=3, command=self.undo_karaoke, style="Secondary.TButton").pack(side="left")
+        ttk.Button(ops_row2, text="↷", width=3, command=self.redo_karaoke, style="Secondary.TButton").pack(side="left", padx=(1, 0))
+        ttk.Button(ops_row2, text="Сохр", width=4, command=self.save_ass, style="Success.TButton").pack(side="left", padx=(2, 0))
+        ttk.Separator(ops_row2, orient="vertical").pack(side="left", fill="y", padx=(2, 2))
+        ttk.Button(ops_row2, text="B+", width=3, command=self.colour_selected_karaoke_burst, style="Danger.TButton").pack(side="left")
+        ttk.Button(ops_row2, text="B−", width=3, command=self.uncolour_selected_karaoke_burst, style="Secondary.TButton").pack(side="left", padx=(1, 0))
+        ttk.Button(ops_row2, text="♪", width=3, command=self.export_burst_or_selection_audio, style="Secondary.TButton").pack(side="left", padx=(1, 0))
+        ttk.Label(ops_row2, textvariable=self.karaoke_burst_state_var, style="CardMuted.TLabel").pack(side="left", padx=(4, 0))
 
         # Help text: ultra-compact, hidden by default on small screens
         self.karaoke_help = ttk.Label(
@@ -1668,47 +1674,54 @@ class KaraokeApp(tk.Tk):
         self.burst_tree.bind("<<TreeviewSelect>>", self._burst_selected)
         self.burst_tree.bind("<Double-1>", self._burst_double_click)
 
-        # Compact Dock: Measurements & Burst Card
+        # Compact Dock: Measurements & Burst Card (split into clean 2-row layouts)
         dock = ttk.Frame(tab)
 
         meas_card = ttk.Frame(dock, style="Card.TFrame", padding=(6, 3))
         meas_card.pack(side="left", fill="both", expand=True, padx=(0, 2))
-        self.measure_text = ttk.Label(meas_card, text="Слог: —", style="CardHeader.TLabel")
-        self.measure_text.pack(anchor="w")
+
+        m_header = ttk.Frame(meas_card, style="Card.TFrame")
+        m_header.pack(fill="x")
+        self.measure_text = ttk.Label(m_header, text="Слог: —", style="CardHeader.TLabel")
+        self.measure_text.pack(side="left")
+        ttk.Button(m_header, text="▶", width=3, command=self.play_sps_selection, style="Accent.TButton").pack(side="right", padx=(2, 0))
+        ttk.Button(m_header, text="■", width=3, command=self.stop_playback, style="Secondary.TButton").pack(side="right")
 
         m_inputs = ttk.Frame(meas_card, style="Card.TFrame")
-        m_inputs.pack(fill="x", pady=(1, 0))
+        m_inputs.pack(fill="x", pady=(2, 0))
         ttk.Label(m_inputs, text="S:", style="CardTitle.TLabel").pack(side="left", padx=(0, 2))
         self.measure_start_var = tk.StringVar()
-        self.measure_start_entry = ttk.Entry(m_inputs, textvariable=self.measure_start_var, width=9)
+        self.measure_start_entry = ttk.Entry(m_inputs, textvariable=self.measure_start_var, width=8)
         self.measure_start_entry.pack(side="left")
-        ttk.Label(m_inputs, text="E:", style="CardTitle.TLabel").pack(side="left", padx=(4, 2))
+        ttk.Label(m_inputs, text="E:", style="CardTitle.TLabel").pack(side="left", padx=(3, 2))
         self.measure_end_var = tk.StringVar()
-        self.measure_end_entry = ttk.Entry(m_inputs, textvariable=self.measure_end_var, width=9)
+        self.measure_end_entry = ttk.Entry(m_inputs, textvariable=self.measure_end_var, width=8)
         self.measure_end_entry.pack(side="left")
-        ttk.Button(m_inputs, text="OK", width=3, command=self.apply_measurement_fields, style="Primary.TButton").pack(side="left", padx=(4, 0))
-        ttk.Button(m_inputs, text="Сбр", width=3, command=self.reset_selected_measurement, style="Secondary.TButton").pack(side="left", padx=(2, 0))
-        ttk.Button(m_inputs, text="↶", width=3, command=self.undo_sps_measurement, style="Secondary.TButton").pack(side="left", padx=(3, 0))
+        ttk.Button(m_inputs, text="OK", width=3, command=self.apply_measurement_fields, style="Primary.TButton").pack(side="left", padx=(3, 0))
+        ttk.Button(m_inputs, text="Сбр", width=3, command=self.reset_selected_measurement, style="Secondary.TButton").pack(side="left", padx=(1, 0))
+        ttk.Separator(m_inputs, orient="vertical").pack(side="left", fill="y", padx=(2, 2))
+        ttk.Button(m_inputs, text="↶", width=3, command=self.undo_sps_measurement, style="Secondary.TButton").pack(side="left")
         ttk.Button(m_inputs, text="↷", width=3, command=self.redo_sps_measurement, style="Secondary.TButton").pack(side="left", padx=(1, 0))
-        ttk.Button(m_inputs, text="▶", width=3, command=self.play_sps_selection, style="Accent.TButton").pack(side="left", padx=(4, 0))
-        ttk.Button(m_inputs, text="■", width=3, command=self.stop_playback, style="Secondary.TButton").pack(side="left", padx=(1, 0))
         self.measure_stats = ttk.Label(m_inputs, text="", style="CardMuted.TLabel")
-        self.measure_stats.pack(side="left", padx=(4, 0))
+        self.measure_stats.pack(side="left", padx=(3, 0))
 
         burst_card = ttk.Frame(dock, style="Card.TFrame", padding=(6, 3))
         burst_card.pack(side="right", fill="both", padx=(2, 0))
         self.measure_peak_var = tk.StringVar(value="Бёрст: —")
         self.measure_peak_row = burst_card
-        ttk.Label(burst_card, textvariable=self.measure_peak_var, style="CardHeader.TLabel").pack(anchor="w")
+
+        b_header = ttk.Frame(burst_card, style="Card.TFrame")
+        b_header.pack(fill="x")
+        ttk.Label(b_header, textvariable=self.measure_peak_var, style="CardHeader.TLabel").pack(side="left")
+        ttk.Button(b_header, text="Выд", width=4, command=self.select_fastest_legacy_burst, style="Accent.TButton").pack(side="right")
 
         b_actions = ttk.Frame(burst_card, style="Card.TFrame")
-        b_actions.pack(fill="x", pady=(1, 0))
-        ttk.Button(b_actions, text="Выд", width=4, command=self.select_fastest_legacy_burst, style="Accent.TButton").pack(side="left")
-        ttk.Button(b_actions, text="B+", width=3, command=self.colour_selected_burst, style="Danger.TButton").pack(side="left", padx=(2, 0))
+        b_actions.pack(fill="x", pady=(2, 0))
+        ttk.Button(b_actions, text="B+", width=3, command=self.colour_selected_burst, style="Danger.TButton").pack(side="left")
         ttk.Button(b_actions, text="B−", width=3, command=self.uncolour_selected_burst, style="Secondary.TButton").pack(side="left", padx=(1, 0))
-        ttk.Separator(b_actions, orient="vertical").pack(side="left", fill="y", padx=(3, 3))
+        ttk.Separator(b_actions, orient="vertical").pack(side="left", fill="y", padx=(2, 2))
         ttk.Button(b_actions, text="♪", width=3, command=self.export_burst_or_selection_audio, style="Secondary.TButton").pack(side="left")
-        ttk.Button(b_actions, text="CSV", width=4, command=self.export_measurements, style="Secondary.TButton").pack(side="left", padx=(2, 0))
+        ttk.Button(b_actions, text="CSV", width=4, command=self.export_measurements, style="Secondary.TButton").pack(side="left", padx=(1, 0))
         ttk.Button(b_actions, text="Загр", width=4, command=self.import_measurements, style="Secondary.TButton").pack(side="left", padx=(1, 0))
 
         self.measure_start_entry.bind("<Return>", lambda _e: self.apply_measurement_fields())
@@ -3053,7 +3066,7 @@ class KaraokeApp(tk.Tk):
             self.karaoke_timeline.set_spectrogram(
                 self.spectrogram, view=self.spectrogram_view, reset_view=False
             )
-            self.karaoke_info.configure(text=f"{len(timeline.syllables)} karaoke-слогов · ручных burst-областей: {len(manual)}")
+            self.karaoke_info.configure(text=f"{len(timeline.syllables)} сл · бёрстов: {len(manual)}")
         else:
             self.karaoke_timeline.set_data([], reset_view=True)
             self.karaoke_info.configure(text="0 слогов")
@@ -3084,7 +3097,7 @@ class KaraokeApp(tk.Tk):
         )
         if self.session.subtitle_path:
             dirty = " *" if dirty_now else ""
-            self.ass_label.configure(text=f"{self.session.subtitle_path}{dirty}")
+            self.ass_label.configure(text=f"{self.session.subtitle_path.name}{dirty}")
         else:
             self.ass_label.configure(text="ASS не открыт")
         self.title("Karaoke SPS Workbench" + (" *" if dirty_now else ""))
@@ -3793,7 +3806,7 @@ class KaraokeApp(tk.Tk):
         self.sps_summary.configure(text="Материал нужно передать заново после правки Karaoke")
         self.burst_tree.delete(*self.burst_tree.get_children())
         self.karaoke_info.configure(
-            text=f"{len(timeline.syllables)} karaoke-слогов · ручных burst-областей: {len(manual)}"
+            text=f"{len(timeline.syllables)} сл · бёрстов: {len(manual)}"
         )
         self._refresh_labels()
         if hasattr(self, "alignment_panel"):
@@ -4248,7 +4261,7 @@ class KaraokeApp(tk.Tk):
         self.sps_timeline.set_data([], reset_view=False)
         self.sps_summary.configure(text="Материал нужно передать заново после правки Karaoke")
         self.burst_tree.delete(*self.burst_tree.get_children())
-        self.karaoke_info.configure(text=f"{len(timeline.syllables)} karaoke-слогов · ручных burst-областей: {len(manual)}")
+        self.karaoke_info.configure(text=f"{len(timeline.syllables)} сл · бёрстов: {len(manual)}")
         self._refresh_labels()
         if hasattr(self, "alignment_panel"):
             self.alignment_panel.refresh_project()

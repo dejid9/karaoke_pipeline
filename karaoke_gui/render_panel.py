@@ -1868,6 +1868,7 @@ class RenderPanel(ttk.Frame):
         try:
             output_settings = self._output_settings()
             counter_settings = self._burst_counter_settings()
+            range_settings = self._range_settings()
         except Exception as exc:
             messagebox.showerror("Некорректные настройки", str(exc), parent=self)
             return
@@ -1901,8 +1902,19 @@ class RenderPanel(ttk.Frame):
         work_doc = AssDocument.from_text(document.dumps())
         media = self.session.media_path
         media = media if media is not None and media.exists() else None
+        audio_media = media if self.include_audio_var.get() else None
         active_only = self.burst_counter_interval_var.get() == "Только таблица"
         burst_timings = self._burst_timing_overrides()
+        render_range = (
+            resolve_render_range(
+                work_doc,
+                range_settings,
+                media_duration=probe_media_duration(media, ffmpeg) if media is not None else None,
+                audio_bounds=probe_audio_bounds(media, ffmpeg) if media is not None else None,
+            )
+            if range_settings is not None
+            else None
+        )
         self._render_generation += 1
         generation = self._render_generation
         self._render_cancel_event = threading.Event()
@@ -1919,9 +1931,17 @@ class RenderPanel(ttk.Frame):
             task.log(f"Output: {output}")
             task.log(
                 "Interval: "
-                + ("from first burst to song end" if active_only else "full song")
+                + (
+                    f"fragment {render_range.render_start:.3f}–{render_range.render_end:.3f} s"
+                    if render_range is not None
+                    else ("from first burst to song end" if active_only else "full song")
+                )
             )
             task.log(f"Exact SPS timing overrides: {len(burst_timings)}")
+            if audio_media is not None:
+                task.log(f"Audio: {audio_media.name}")
+            else:
+                task.log("Audio: disabled or no media file available")
 
         def work():
             try:
@@ -1937,6 +1957,8 @@ class RenderPanel(ttk.Frame):
                     duration=duration,
                     active_interval_only=active_only,
                     burst_timing_overrides=burst_timings,
+                    render_range=render_range,
+                    audio_source=audio_media,
                     progress=(lambda value, stage: task.update(value, stage)) if task else None,
                     log=(lambda line: task.log(line)) if task else None,
                     cancel_event=self._render_cancel_event,

@@ -838,6 +838,7 @@ def prepare_range_document(document: AssDocument, segment: ResolvedRenderRange) 
     for syl in result.karaoke_syllables():
         syllables_by_event.setdefault(syl.event_line_index, []).append(syl)
 
+    orig_id_to_render_id: dict[str, str] = {}
     for event in result.events():
         if event.kind != "Dialogue":
             continue
@@ -853,10 +854,13 @@ def prepare_range_document(document: AssDocument, segment: ResolvedRenderRange) 
         selected_raw = event.text[first.tag_block_start:selected_end]
         delay_cs = max(0, int(round((first.start - segment.render_start) * 100.0)))
         delay = rf"{{\k{delay_cs}}}" if delay_cs else ""
+        for idx, s in enumerate(chosen):
+            orig_id_to_render_id[s.id] = f"L{event.line_index}:S{1 + idx if delay_cs else idx}"
         event.text = prefix + delay + selected_raw
         event.start_raw = "0:00:00.00"
         event.end_raw = format_ass_time(max(0.01, last.end - segment.render_start))
         event.commit()
+    setattr(result, "_orig_id_to_render_id", orig_id_to_render_id)
     return result
 
 
@@ -1645,6 +1649,8 @@ def expand_extra_track_overlays(
     settings: RenderLayoutSettings,
     *,
     refs: Optional[list[RetimedReference]] = None,
+    render_range: Optional[ResolvedRenderRange] = None,
+    orig_seq_to_id: Optional[Mapping[int, str]] = None,
 ) -> None:
     """Generate pixel-exact retimed syllable overlay Dialogue lines and wipe effects.
 
@@ -1661,6 +1667,7 @@ def expand_extra_track_overlays(
 
     track0_syllables = [s for s in document.karaoke_syllables() if getattr(s, "track", 0) == 0]
     track0_map = {i + 1: s for i, s in enumerate(track0_syllables)}
+    track0_by_id = {s.id: s for s in track0_syllables}
 
     by_event: dict[int, list[KaraokeSyllable]] = {}
     for s in document.karaoke_syllables(include_comments=False):
@@ -1681,20 +1688,29 @@ def expand_extra_track_overlays(
     events_by_line = {e.line_index: e for e in document.events()}
     new_event_lines: list[str] = []
 
+    offset = render_range.render_start if render_range is not None else 0.0
+
     for ref in refs:
-        if ref.ref_track0_seq not in track0_map:
+        if orig_seq_to_id is not None:
+            target_id = orig_seq_to_id.get(ref.ref_track0_seq)
+            ref_syl = track0_by_id.get(target_id) if target_id else None
+        else:
+            ref_syl = track0_map.get(ref.ref_track0_seq)
+        if ref_syl is None:
             continue
-        ref_syl = track0_map[ref.ref_track0_seq]
         parent_event = events_by_line.get(ref_syl.event_line_index)
-        if parent_event is None:
+        if parent_event is None or parent_event.kind != "Dialogue":
             continue
 
-        overlay_start = ref.start
+        overlay_start = ref.start - offset
         overlay_end = (
-            overlay_start + (ref.duration_cs / 100.0)
+            (ref.start + (ref.duration_cs / 100.0)) - offset
             if ref.has_wipe
             else parent_event.end
         )
+        if overlay_end <= 0.0:
+            continue
+        overlay_start = max(0.0, overlay_start)
         if overlay_end <= overlay_start:
             continue
 
@@ -1874,10 +1890,19 @@ def prepare_render_document(
 ) -> AssDocument:
     """Create a render-only ASS copy; the editable source document is untouched."""
     settings.validate()
+    orig_track0 = [s for s in document.karaoke_syllables() if getattr(s, "track", 0) == 0]
+    seq_to_syl_id = {i + 1: s.id for i, s in enumerate(orig_track0)}
+    refs = extract_retimed_references(document)
+
     render_doc = prepare_range_document(document, render_range) if render_range is not None else AssDocument.from_text(document.dumps())
     render_doc.bom = document.bom
-    refs = extract_retimed_references(render_doc)
     setattr(render_doc, "_extra_track_references", refs)
+    if render_range is not None:
+        id_map = getattr(render_doc, "_orig_id_to_render_id", {})
+        seq_to_render_id = {seq: id_map.get(s_id, s_id) for seq, s_id in seq_to_syl_id.items()}
+    else:
+        seq_to_render_id = seq_to_syl_id
+    setattr(render_doc, "_extra_track_seq_to_id", seq_to_render_id)
     materialize_unspoken_fragments(render_doc, settings)
     for style in ass_text_styles(render_doc).values():
         if style.alignment in {1, 2, 3}:
@@ -1892,7 +1917,9 @@ def prepare_render_document(
         event.commit()
     _enable_whole_text_layout_for_rtl(render_doc)
     apply_render_burst_styling(render_doc, settings)
-    expand_extra_track_overlays(render_doc, settings, refs=refs)
+    expand_extra_track_overlays(
+        render_doc, settings, refs=refs, render_range=render_range, orig_seq_to_id=seq_to_render_id
+    )
     return render_doc
 
 
@@ -2165,6 +2192,7 @@ def materialize_romanization_overlays(
     size_ratio: Optional[float] = None,
     offset_y: Optional[int] = None,
     layout: Optional[RenderLayoutSettings] = None,
+    render_range: Optional[ResolvedRenderRange] = None,
 ) -> int:
     """Add positioned render-only Dialogue lines for manual romanization."""
     if layout is not None and not layout.enable_romanization:
@@ -2191,7 +2219,11 @@ def materialize_romanization_overlays(
     lines: list[str] = []
 
     track0_syllables = [s for s in document.karaoke_syllables() if getattr(s, "track", 0) == 0]
-    track0_id_to_seq = {s.id: i + 1 for i, s in enumerate(track0_syllables)}
+    seq_to_id = getattr(document, "_extra_track_seq_to_id", None)
+    if seq_to_id is not None:
+        track0_id_to_seq = {s_id: seq for seq, s_id in seq_to_id.items()}
+    else:
+        track0_id_to_seq = {s.id: i + 1 for i, s in enumerate(track0_syllables)}
     refs_by_seq: dict[int, list[RetimedReference]] = {}
     if hasattr(document, "_extra_track_references"):
         for ref in getattr(document, "_extra_track_references"):
@@ -2285,13 +2317,17 @@ def materialize_romanization_overlays(
                 ov_layer = str(int(event.layer) + 2)
             except ValueError:
                 ov_layer = "2"
+            offset = render_range.render_start if render_range is not None else 0.0
             for ref in refs_by_seq[seq]:
-                ov_start = ref.start
+                ov_start = ref.start - offset
                 ov_end = (
-                    ov_start + (ref.duration_cs / 100.0)
+                    (ref.start + (ref.duration_cs / 100.0)) - offset
                     if ref.has_wipe
                     else event.end
                 )
+                if ov_end <= 0.0:
+                    continue
+                ov_start = max(0.0, ov_start)
                 if ov_end <= ov_start:
                     continue
                 ov_tags = (
@@ -3263,7 +3299,7 @@ def render_karaoke_video(
             raise ValueError("Render canvas cannot be smaller than the source PlayRes")
         _set_ass_playres(render_doc, canvas_x, canvas_y)
         playres_x, playres_y = canvas_x, canvas_y
-    materialize_romanization_overlays(render_doc, ffmpeg=ffmpeg, layout=layout)
+    materialize_romanization_overlays(render_doc, ffmpeg=ffmpeg, layout=layout, render_range=render_range)
     crop = crop.clamp(playres_x, playres_y)
     follow_plan: Optional[VerticalFollowPlan] = None
     if vertical_follow_settings is not None and vertical_follow_settings.enabled:
@@ -3427,6 +3463,8 @@ def render_burst_counter_video(
     duration: Optional[float] = None,
     active_interval_only: bool = False,
     burst_timing_overrides: Optional[Mapping[str, tuple[float, float]]] = None,
+    render_range: Optional[ResolvedRenderRange] = None,
+    audio_source: str | Path | None = None,
     progress: Optional[ProgressCallback] = None,
     log: Optional[LogCallback] = None,
     cancel_event: Optional[threading.Event] = None,
@@ -3438,16 +3476,25 @@ def render_burst_counter_video(
         settings,
         text_style=settings.text_style or karaoke_text_style(document),
     )
+    plan_duration = render_range.render_end if render_range is not None else duration
     plan = build_burst_counter_plan(
         document,
-        duration=duration,
+        duration=plan_duration,
         tick_seconds=settings.tick_seconds,
         timing_overrides=burst_timing_overrides,
         round_summary_seconds=settings.round_summary_seconds,
         custom_summary=settings.custom_summary,
     )
+    if render_range is not None:
+        plan = slice_burst_counter_plan(
+            plan, render_range.render_start, render_range.render_end
+        )
     if not plan.regions:
-        raise ValueError("В ASS нет слогов, окрашенных как burst")
+        raise ValueError(
+            "В выбранном диапазоне нет слогов, окрашенных как burst"
+            if render_range is not None
+            else "В ASS нет слогов, окрашенных как burst"
+        )
     layout = measure_burst_counter_layout(plan, ffmpeg=ffmpeg, settings=settings)
 
     frame_width = layout.outer_width
@@ -3455,8 +3502,14 @@ def render_burst_counter_video(
     if output_settings.profile == "black_mp4":
         frame_width += frame_width % 2
         frame_height += frame_height % 2
-    window_start = plan.first_start if active_interval_only else 0.0
-    window_end = plan.duration
+    if render_range is not None:
+        window_start = 0.0
+        window_end = render_range.duration
+        render_duration = render_range.duration
+    else:
+        window_start = plan.first_start if active_interval_only else 0.0
+        window_end = plan.duration
+        render_duration = window_end - window_start
     counter_doc = build_burst_counter_document(
         plan,
         layout,
@@ -3467,7 +3520,6 @@ def render_burst_counter_video(
         window_end=window_end,
         bottom_right=False,
     )
-    render_duration = window_end - window_start
     target = Path(output).resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
     # A separate counter is already measured in output pixels.  Applying the
@@ -3475,6 +3527,8 @@ def render_burst_counter_video(
     # information card, contrary to this export mode's contract.
     native_output = replace(output_settings, resolution_scale=1.0)
     crop = CropRect(0, 0, frame_width, frame_height)
+    audio_bounds = probe_audio_bounds(audio_source, ffmpeg) if audio_source else None
+    has_audio = audio_bounds is not None
     with tempfile.TemporaryDirectory(prefix="karaoke-burst-counter-") as td:
         _write_temp_ass(counter_doc, td, "counter.ass")
         cmd = build_render_command(
@@ -3486,12 +3540,16 @@ def render_burst_counter_video(
             duration=render_duration,
             output=target,
             output_settings=native_output,
+            audio_source=audio_source,
+            render_range=render_range,
+            has_audio=has_audio,
         )
         if log:
-            mode = "table interval" if active_interval_only else "full song"
+            mode = "fragment" if render_range is not None else ("table interval" if active_interval_only else "full song")
+            audio_note = f"; with audio from {Path(audio_source).name}" if has_audio else "; no audio"
             log(
                 f"Separate Burst SPS: {frame_width}x{frame_height}; "
-                f"{mode}; {render_duration:.3f}s"
+                f"{mode}; {render_duration:.3f}s{audio_note}"
             )
         _run_ffmpeg_progress(
             cmd,
@@ -3607,7 +3665,7 @@ def render_karaoke_on_source(
         raise ValueError("Output file must differ from the source media")
     target.parent.mkdir(parents=True, exist_ok=True)
     render_doc = prepare_render_document(document, layout, render_range=render_range)
-    materialize_romanization_overlays(render_doc, ffmpeg=ffmpeg, layout=layout)
+    materialize_romanization_overlays(render_doc, ffmpeg=ffmpeg, layout=layout, render_range=render_range)
     audio_bounds = probe_audio_bounds(source, ffmpeg)
     with tempfile.TemporaryDirectory(prefix="karaoke-burn-video-") as td:
         _write_temp_ass(render_doc, td, "render.ass")
@@ -3641,7 +3699,7 @@ def export_render_ass(
     ffmpeg: str | Path = "ffmpeg",
 ) -> Path:
     render_doc = prepare_render_document(document, layout, render_range=render_range)
-    materialize_romanization_overlays(render_doc, ffmpeg=ffmpeg, layout=layout)
+    materialize_romanization_overlays(render_doc, ffmpeg=ffmpeg, layout=layout, render_range=render_range)
     target = Path(output).resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
     render_doc.save(target)
