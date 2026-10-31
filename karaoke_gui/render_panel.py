@@ -1868,7 +1868,7 @@ class RenderPanel(ttk.Frame):
         try:
             output_settings = self._output_settings()
             counter_settings = self._burst_counter_settings()
-            range_settings = self._range_settings()
+            render_range = self._resolved_range()
         except Exception as exc:
             messagebox.showerror("Некорректные настройки", str(exc), parent=self)
             return
@@ -1903,18 +1903,10 @@ class RenderPanel(ttk.Frame):
         media = self.session.media_path
         media = media if media is not None and media.exists() else None
         audio_media = media if self.include_audio_var.get() else None
+        if render_range is not None and audio_media is not None:
+            render_range = self._resolved_range(ffmpeg=ffmpeg, source_media=audio_media)
         active_only = self.burst_counter_interval_var.get() == "Только таблица"
         burst_timings = self._burst_timing_overrides()
-        render_range = (
-            resolve_render_range(
-                work_doc,
-                range_settings,
-                media_duration=probe_media_duration(media, ffmpeg) if media is not None else None,
-                audio_bounds=probe_audio_bounds(media, ffmpeg) if media is not None else None,
-            )
-            if range_settings is not None
-            else None
-        )
         self._render_generation += 1
         generation = self._render_generation
         self._render_cancel_event = threading.Event()
