@@ -4,6 +4,11 @@ import android.graphics.Paint
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
@@ -280,41 +285,76 @@ fun Timeline(
                 .height(canvasHeight)
                 .background(palette.canvas)
                 .pointerInput(Unit) {
-                    detectTapGestures { offset ->
-                        val pps = 50f * curZoom
-                        val clickTime = ((offset.x + curScroll) / pps).toDouble()
-                        val hit = curSyllables.firstOrNull { s ->
-                            clickTime in s.start..s.end
-                        }
-                        if (hit != null) {
-                            curOnSelect(hit.id)
-                        } else {
-                            curOnSeek(clickTime.coerceIn(0.0, curDuration))
-                        }
-                    }
-                }
-                .pointerInput(Unit) {
-                    detectTransformGestures(panZoomLock = false) { centroid, pan, zoom, _ ->
-                        val pps = 50f * curZoom
-                        val effectiveTotalWidth = (curDuration * pps).toFloat()
-                        val maxScroll = max(0f, effectiveTotalWidth - curWidth)
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        var isMultiTouch = false
+                        var totalPan = Offset.Zero
+                        val touchSlop = viewConfiguration.touchSlop
+                        var pastTouchSlop = false
 
-                        // 1. Zoom (pinch)
-                        if (kotlin.math.abs(zoom - 1f) > 0.005f) {
-                            val newZoom = (curZoom * zoom).coerceIn(0.25f, 20f)
-                            val newPps = 50f * newZoom
-                            val anchorTime = (curScroll + centroid.x) / pps
-                            val newScroll = (anchorTime * newPps - centroid.x)
-                                .coerceIn(0f, max(0f, (curDuration * newPps - curWidth).toFloat()))
-                            curOnZoomChange(newZoom)
-                            curOnScrollChange(newScroll)
-                        }
+                        do {
+                            val event = awaitPointerEvent()
+                            val canceled = event.changes.any { it.isConsumed }
+                            if (canceled) break
 
-                        // 2. Pan (скролл)
-                        if (kotlin.math.abs(pan.x) > 0.1f) {
-                            val newScroll = (curScroll - pan.x).coerceIn(0f, maxScroll)
-                            curOnScrollChange(newScroll)
-                        }
+                            if (event.changes.size > 1) {
+                                isMultiTouch = true
+                                pastTouchSlop = true
+                                val zoomChange = event.calculateZoom()
+                                val panChange = event.calculatePan()
+                                val centroid = event.calculateCentroid(useCurrent = false)
+
+                                val pps = 50f * curZoom
+                                val effectiveTotalWidth = (curDuration * pps).toFloat()
+                                val maxScroll = max(0f, effectiveTotalWidth - curWidth)
+
+                                if (kotlin.math.abs(zoomChange - 1f) > 0.003f) {
+                                    val newZoom = (curZoom * zoomChange).coerceIn(0.25f, 20f)
+                                    val newPps = 50f * newZoom
+                                    val anchorTime = (curScroll + centroid.x) / pps
+                                    val newScroll = (anchorTime * newPps - centroid.x - panChange.x)
+                                        .coerceIn(0f, max(0f, (curDuration * newPps - curWidth).toFloat()))
+                                    curOnZoomChange(newZoom)
+                                    curOnScrollChange(newScroll)
+                                } else if (kotlin.math.abs(panChange.x) > 0.5f) {
+                                    val newScroll = (curScroll - panChange.x).coerceIn(0f, maxScroll)
+                                    curOnScrollChange(newScroll)
+                                }
+                                event.changes.forEach { it.consume() }
+                            } else if (event.changes.size == 1 && !isMultiTouch) {
+                                val change = event.changes[0]
+                                if (change.pressed) {
+                                    val drag = change.position - change.previousPosition
+                                    totalPan += drag
+                                    if (!pastTouchSlop && kotlin.math.abs(totalPan.x) > touchSlop) {
+                                        pastTouchSlop = true
+                                    }
+                                    if (pastTouchSlop && kotlin.math.abs(drag.x) > 0.3f) {
+                                        val pps = 50f * curZoom
+                                        val effectiveTotalWidth = (curDuration * pps).toFloat()
+                                        val maxScroll = max(0f, effectiveTotalWidth - curWidth)
+                                        val newScroll = (curScroll - drag.x).coerceIn(0f, maxScroll)
+                                        curOnScrollChange(newScroll)
+                                        change.consume()
+                                    }
+                                } else {
+                                    // Краткий тап (отпускание без скролла)
+                                    if (!pastTouchSlop) {
+                                        val tapPos = change.position
+                                        val pps = 50f * curZoom
+                                        val clickTime = ((tapPos.x + curScroll) / pps).toDouble()
+                                        val hit = curSyllables.firstOrNull { s ->
+                                            clickTime in s.start..s.end
+                                        }
+                                        if (hit != null) {
+                                            curOnSelect(hit.id)
+                                        } else {
+                                            curOnSeek(clickTime.coerceIn(0.0, curDuration))
+                                        }
+                                    }
+                                }
+                            }
+                        } while (event.changes.any { it.pressed })
                     }
                 }
         ) {
@@ -589,26 +629,35 @@ private fun DrawScope.drawWaveform(
 ) {
     if (waveformData.isEmpty() || duration <= 0) return
 
-    val samplesPerPixel = (waveformData.size / (duration * pixelsPerSecond)).toFloat().coerceAtLeast(1f)
+    val totalSamples = waveformData.size
     val centerY = canvasHeight / 2f
-    val amplitude = (canvasHeight - 24f) / 2f
+    val amplitude = (canvasHeight - 20f) / 2f
+    val widthPx = size.width.toInt()
 
-    val startPixel = (scrollOffset / pixelsPerSecond * samplesPerPixel).toInt().coerceAtLeast(0)
-    val endPixel = ((scrollOffset + size.width) / pixelsPerSecond * samplesPerPixel).toInt()
-        .coerceAtMost(waveformData.size - 1)
+    for (px in 0 until widthPx) {
+        val t1 = (scrollOffset + px) / pixelsPerSecond
+        val t2 = (scrollOffset + px + 1) / pixelsPerSecond
 
-    for (pixel in startPixel..endPixel) {
-        val sampleIndex = (pixel * samplesPerPixel).toInt().coerceIn(0, waveformData.size - 1)
-        val value = waveformData[sampleIndex]
-        val x = (pixel / samplesPerPixel * pixelsPerSecond - scrollOffset).toFloat()
-        val h = value * amplitude
+        if (t2 < 0.0 || t1 > duration) continue
 
-        drawLine(
-            color = color,
-            start = Offset(x, centerY - h),
-            end = Offset(x, centerY + h),
-            strokeWidth = 1f
-        )
+        val sStart = (t1 / duration * totalSamples).toInt().coerceIn(0, totalSamples - 1)
+        val sEnd = (t2 / duration * totalSamples).toInt().coerceIn(sStart, totalSamples - 1)
+
+        var maxVal = 0f
+        for (i in sStart..sEnd) {
+            val v = kotlin.math.abs(waveformData[i])
+            if (v > maxVal) maxVal = v
+        }
+
+        if (maxVal > 0.001f) {
+            val h = maxVal * amplitude
+            drawLine(
+                color = color,
+                start = Offset(px.toFloat(), centerY - h),
+                end = Offset(px.toFloat(), centerY + h),
+                strokeWidth = 1f
+            )
+        }
     }
 }
 
